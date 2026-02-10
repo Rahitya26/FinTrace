@@ -1,8 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TrendingUp, TrendingDown, DollarSign, PieChart, Activity } from 'lucide-react';
-import { getDashboardSummary } from '../lib/api';
+import { getDashboardSummary, getDashboardAnalytics } from '../lib/api';
 import { cn, formatCurrency } from '../lib/utils';
+import {
+    LineChart,
+    Line,
+    XAxis,
+    YAxis,
+    CartesianGrid,
+    Tooltip,
+    ResponsiveContainer,
+    PieChart as RechartsPieChart,
+    Pie,
+    Cell,
+    Legend
+} from 'recharts';
 
 const Dashboard = () => {
     const [stats, setStats] = useState({
@@ -11,6 +24,10 @@ const Dashboard = () => {
         totalCompanyExpenses: 0,
         processTypeBreakdown: []
     });
+    const [analytics, setAnalytics] = useState({
+        trend: [],
+        expenses: []
+    });
     const [dateRange, setDateRange] = useState({
         startDate: '',
         endDate: ''
@@ -18,12 +35,15 @@ const Dashboard = () => {
     const [isLoading, setIsLoading] = useState(true);
     const navigate = useNavigate();
 
+    // Theme colors
+    const COLORS = ['#3B82F6', '#EF4444', '#10B981', '#8B5CF6', '#F59E0B'];
+
     useEffect(() => {
         fetchStats();
+        fetchAnalytics();
     }, [dateRange]);
 
     const fetchStats = async () => {
-        setIsLoading(true);
         try {
             const params = {};
             if (dateRange.startDate) params.startDate = dateRange.startDate;
@@ -33,6 +53,15 @@ const Dashboard = () => {
             setStats(response.data);
         } catch (err) {
             console.error('Failed to fetch dashboard stats', err);
+        }
+    };
+
+    const fetchAnalytics = async () => {
+        try {
+            const response = await getDashboardAnalytics();
+            setAnalytics(response.data);
+        } catch (err) {
+            console.error('Failed to fetch analytics', err);
         } finally {
             setIsLoading(false);
         }
@@ -162,14 +191,79 @@ const Dashboard = () => {
                     </div>
                 </div>
 
-                <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col justify-center items-center text-center">
-                    <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-full mb-4">
-                        <Activity className="w-8 h-8 text-slate-400" />
+                <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col">
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-6 flex items-center">
+                        <Activity className="w-5 h-5 mr-2 text-slate-400" />
+                        Financial Trends
+                    </h3>
+
+                    {/* Charts Container */}
+                    <div className="flex-1 flex flex-col gap-8">
+                        {/* Line Chart */}
+                        <div className="h-48 w-full">
+                            <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">6 Month Trend</h4>
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={analytics.trend}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                                    <XAxis
+                                        dataKey="name"
+                                        axisLine={false}
+                                        tickLine={false}
+                                        tick={{ fill: '#94a3b8', fontSize: 12 }}
+                                        dy={10}
+                                    />
+                                    <YAxis
+                                        hide
+                                    />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff' }}
+                                        itemStyle={{ color: '#fff' }}
+                                        formatter={(value) => formatCurrency(value)}
+                                    />
+                                    <Line type="monotone" dataKey="revenue" stroke="#3b82f6" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Revenue" />
+                                    <Line type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2} dot={false} activeDot={{ r: 4 }} name="Expenses" />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                        {/* Donut Chart (Company Expenses) */}
+                        <div className="flex-1 flex flex-col h-40">
+                            <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Expense Breakdown</h4>
+                            <div className="flex items-center h-full">
+                                <div className="w-1/2 h-full">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <RechartsPieChart>
+                                            <Pie
+                                                data={analytics.expenses}
+                                                cx="50%"
+                                                cy="50%"
+                                                innerRadius={25}
+                                                outerRadius={40}
+                                                paddingAngle={5}
+                                                dataKey="value"
+                                            >
+                                                {analytics.expenses.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                                ))}
+                                            </Pie>
+                                            <Tooltip formatter={(value) => formatCurrency(value)} contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff' }} itemStyle={{ color: '#fff' }} />
+                                        </RechartsPieChart>
+                                    </ResponsiveContainer>
+                                </div>
+                                <div className="w-1/2 pl-4 text-xs space-y-1 overflow-y-auto max-h-32">
+                                    {analytics.expenses.map((entry, index) => (
+                                        <div key={index} className="flex items-center justify-between">
+                                            <div className="flex items-center">
+                                                <div className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
+                                                <span className="text-slate-600 dark:text-slate-300 truncate max-w-[80px]">{entry.name}</span>
+                                            </div>
+                                            <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(entry.value)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Detailed Analytics</h3>
-                    <p className="text-slate-500 dark:text-slate-400 max-w-sm">
-                        More detailed charts and historical trends will be available once specific date ranges are selected in the Reports tab.
-                    </p>
                 </div>
             </div>
         </div>

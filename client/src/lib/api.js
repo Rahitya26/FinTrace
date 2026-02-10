@@ -15,5 +15,6 @@ export const getExpenses = () => api.get('/expenses');
 export const createExpense = (data) => api.post('/expenses', data);
 
 export const getDashboardSummary = (params) => api.get('/dashboard/summary', { params });
+export const getDashboardAnalytics = () => api.get('/dashboard/analytics');
 
 export default api;
