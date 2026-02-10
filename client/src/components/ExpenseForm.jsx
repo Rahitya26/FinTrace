@@ -45,14 +45,14 @@ const ExpenseForm = ({ onSubmit, onCancel, isLoading }) => {
     return (
         <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-                <label htmlFor="category" className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="category" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                     Category
                 </label>
                 <input
                     id="category"
                     list="category-options"
                     required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors bg-white"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500"
                     value={formData.category}
                     onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                     placeholder="Select or type a category..."
@@ -65,14 +65,14 @@ const ExpenseForm = ({ onSubmit, onCancel, isLoading }) => {
             </div>
 
             <div>
-                <label htmlFor="amount" className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="amount" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                     Amount (₹)
                 </label>
                 <input
                     type="text"
                     id="amount"
                     required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500"
                     value={displayAmount}
                     onChange={handleAmountChange}
                     placeholder="0"
@@ -80,27 +80,27 @@ const ExpenseForm = ({ onSubmit, onCancel, isLoading }) => {
             </div>
 
             <div>
-                <label htmlFor="date" className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="date" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                     Date
                 </label>
                 <input
                     type="date"
                     id="date"
                     required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors bg-white dark:bg-slate-800 text-slate-900 dark:text-white dark:[color-scheme:dark]"
                     value={formData.date}
                     onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                 />
             </div>
 
             <div>
-                <label htmlFor="description" className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="description" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                     Description (Optional)
                 </label>
                 <textarea
                     id="description"
                     rows="3"
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors resize-none"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors resize-none bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500"
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                     placeholder="Detailed description of the expense..."
@@ -111,7 +111,7 @@ const ExpenseForm = ({ onSubmit, onCancel, isLoading }) => {
                 <button
                     type="button"
                     onClick={onCancel}
-                    className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                    className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
                 >
                     Cancel
                 </button>

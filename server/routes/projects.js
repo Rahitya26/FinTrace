@@ -21,13 +21,35 @@ router.get('/', async (req, res) => {
 
 // POST /api/projects - Create a new project
 router.post('/', async (req, res) => {
-    const { clientId, name, type, revenue, costs, startDate, deadline } = req.body;
+    const { clientId, name, type, revenue, costs, startDate, deadline, status } = req.body;
     try {
         const result = await db.query(
-            'INSERT INTO projects (client_id, name, type, revenue_earned, employee_costs, start_date, deadline) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-            [clientId, name, type, revenue, costs, startDate || new Date(), deadline]
+            'INSERT INTO projects (client_id, name, type, revenue_earned, employee_costs, start_date, deadline, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+            [clientId, name, type, revenue, costs, startDate || new Date(), deadline || null, status || 'Active']
         );
         res.status(201).json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Update project status
+router.put('/:id/status', async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    try {
+        const result = await db.query(
+            'UPDATE projects SET status = $1 WHERE id = $2 RETURNING *',
+            [status, id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
+
+        res.json(result.rows[0]);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Internal server error' });

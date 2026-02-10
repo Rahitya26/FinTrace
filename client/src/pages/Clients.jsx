@@ -88,12 +88,12 @@ const Clients = () => {
                         <div
                             key={client.id}
                             onClick={() => navigate(`/projects?search=${encodeURIComponent(client.name)}`)}
-                            className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition-shadow cursor-pointer group"
+                            className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 hover:shadow-md hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-all cursor-pointer group"
                         >
                             <div className="flex items-start justify-between">
                                 <div>
-                                    <h3 className="text-lg font-semibold text-slate-900 group-hover:text-primary transition-colors">{client.name}</h3>
-                                    <span className="inline-block px-2 py-1 text-xs font-medium bg-slate-100 text-slate-600 rounded-full mt-2">
+                                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white group-hover:text-primary transition-colors">{client.name}</h3>
+                                    <span className="inline-block px-2 py-1 text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-full mt-2">
                                         {client.industry}
                                     </span>
                                 </div>
@@ -113,9 +113,9 @@ const Clients = () => {
             {/* Modal for adding client */}
             {isModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-                    <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-                            <h3 className="text-lg font-semibold text-slate-900">Add New Client</h3>
+                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-700">
+                            <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Add New Client</h3>
                             <button
                                 onClick={() => setIsModalOpen(false)}
                                 className="text-slate-400 hover:text-slate-500 transition-colors"

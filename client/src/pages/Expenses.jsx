@@ -56,8 +56,8 @@ const Expenses = () => {
         <div>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
                 <div>
-                    <h2 className="text-3xl font-bold text-slate-900">Company Expenses</h2>
-                    <p className="text-slate-500 mt-1">Track operational overhead and costs</p>
+                    <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Company Expenses</h2>
+                    <p className="text-slate-500 dark:text-slate-400 mt-1">Track operational overhead and costs</p>
                 </div>
                 <button
                     onClick={() => setIsModalOpen(true)}
@@ -68,15 +68,15 @@ const Expenses = () => {
                 </button>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
                 {/* Toolbar */}
-                <div className="p-4 border-b border-slate-200 flex flex-col md:flex-row gap-4 justify-between items-center bg-slate-50">
+                <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex flex-col md:flex-row gap-4 justify-between items-center bg-slate-50 dark:bg-slate-900">
                     <div className="flex items-center w-full md:w-auto relative">
                         <Search className="w-4 h-4 text-slate-400 absolute left-3" />
                         <input
                             type="text"
                             placeholder="Search expenses..."
-                            className="pl-9 pr-4 py-2 w-full md:w-64 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                            className="pl-9 pr-4 py-2 w-full md:w-64 text-sm border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
@@ -86,7 +86,7 @@ const Expenses = () => {
                             <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                             <input
                                 type="date"
-                                className="pl-9 pr-4 py-2 w-full md:w-auto text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                                className="pl-9 pr-4 py-2 w-full md:w-auto text-sm border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary bg-white dark:bg-slate-800 text-slate-900 dark:text-white dark:[color-scheme:dark]"
                                 value={dateFilter}
                                 onChange={(e) => setDateFilter(e.target.value)}
                             />
@@ -105,7 +105,7 @@ const Expenses = () => {
                 {/* Table */}
                 <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
-                        <thead className="bg-slate-50 text-slate-600 font-medium border-b border-slate-200">
+                        <thead className="bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-400 font-medium border-b border-slate-200 dark:border-slate-700">
                             <tr>
                                 <th className="px-6 py-3">Date</th>
                                 <th className="px-6 py-3">Category</th>
@@ -113,28 +113,28 @@ const Expenses = () => {
                                 <th className="px-6 py-3 text-right">Amount</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100">
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                             {filteredExpenses.length === 0 ? (
                                 <tr>
-                                    <td colSpan="4" className="px-6 py-12 text-center text-slate-500">
+                                    <td colSpan="4" className="px-6 py-12 text-center text-slate-500 dark:text-slate-400">
                                         No expenses found matching your filters.
                                     </td>
                                 </tr>
                             ) : (
                                 filteredExpenses.map((expense) => (
-                                    <tr key={expense.id} className="hover:bg-slate-50 transition-colors">
-                                        <td className="px-6 py-3 text-slate-600">
+                                    <tr key={expense.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                                        <td className="px-6 py-3 text-slate-600 dark:text-slate-400">
                                             {format(new Date(expense.date), 'MMM dd, yyyy')}
                                         </td>
                                         <td className="px-6 py-3">
-                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-800">
+                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-200">
                                                 {expense.category}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-3 text-slate-600 max-w-xs truncate">
+                                        <td className="px-6 py-3 text-slate-600 dark:text-slate-300 max-w-xs truncate">
                                             {expense.description || '-'}
                                         </td>
-                                        <td className="px-6 py-3 text-right font-medium text-slate-900">
+                                        <td className="px-6 py-3 text-right font-medium text-slate-900 dark:text-white">
                                             {formatCurrency(expense.amount)}
                                         </td>
                                     </tr>
@@ -142,11 +142,11 @@ const Expenses = () => {
                             )}
                         </tbody>
                         {filteredExpenses.length > 0 && (
-                            <tfoot className="bg-slate-50 border-t border-slate-200">
+                            <tfoot className="bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-700">
                                 <tr>
-                                    <td colSpan="3" className="px-6 py-3 text-right font-semibold text-slate-700">Total</td>
-                                    <td className="px-6 py-3 text-right font-bold text-slate-900">
-                                        ${totalExpenses.toFixed(2)}
+                                    <td colSpan="3" className="px-6 py-3 text-right font-semibold text-slate-700 dark:text-slate-300">Total</td>
+                                    <td className="px-6 py-3 text-right font-bold text-slate-900 dark:text-white">
+                                        {formatCurrency(totalExpenses)}
                                     </td>
                                 </tr>
                             </tfoot>
@@ -158,9 +158,9 @@ const Expenses = () => {
             {/* Modal */}
             {isModalOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-                    <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-                            <h3 className="text-lg font-semibold text-slate-900">Log New Expense</h3>
+                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-700">
+                            <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Log New Expense</h3>
                             <button
                                 onClick={() => setIsModalOpen(false)}
                                 className="text-slate-400 hover:text-slate-500 transition-colors"

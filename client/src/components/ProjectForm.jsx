@@ -62,13 +62,13 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading }) => {
     return (
         <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-                <label htmlFor="clientId" className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="clientId" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                     Client
                 </label>
                 <select
                     id="clientId"
                     required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors bg-white"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                     value={formData.clientId}
                     onChange={(e) => setFormData({ ...formData, clientId: e.target.value })}
                 >
@@ -80,14 +80,14 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading }) => {
             </div>
 
             <div>
-                <label htmlFor="name" className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="name" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                     Project Name
                 </label>
                 <input
                     type="text"
                     id="name"
                     required
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500"
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     placeholder="e.g. Q4 Migration"
@@ -95,7 +95,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading }) => {
             </div>
 
             <div>
-                <label htmlFor="type" className="block text-sm font-medium text-slate-700 mb-1">
+                <label htmlFor="type" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                     Process Type
                 </label>
                 <div className="flex space-x-4">
@@ -109,7 +109,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading }) => {
                                 onChange={(e) => setFormData({ ...formData, type: e.target.value })}
                                 className="text-primary focus:ring-primary"
                             />
-                            <span className="text-sm text-slate-700">{type}</span>
+                            <span className="text-sm text-slate-700 dark:text-slate-300">{type}</span>
                         </label>
                     ))}
                 </div>
@@ -118,27 +118,27 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading }) => {
             {formData.type === 'Fixed Bid' && (
                 <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-4 duration-300">
                     <div>
-                        <label htmlFor="startDate" className="block text-sm font-medium text-slate-700 mb-1">
+                        <label htmlFor="startDate" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                             Start Date
                         </label>
                         <input
                             type="date"
                             id="startDate"
                             required
-                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
+                            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors bg-white dark:bg-slate-800 text-slate-900 dark:text-white dark:[color-scheme:dark]"
                             value={formData.startDate}
                             onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
                         />
                     </div>
                     <div>
-                        <label htmlFor="deadline" className="block text-sm font-medium text-slate-700 mb-1">
+                        <label htmlFor="deadline" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                             Deadline
                         </label>
                         <input
                             type="date"
                             id="deadline"
                             required
-                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
+                            className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors bg-white dark:bg-slate-800 text-slate-900 dark:text-white dark:[color-scheme:dark]"
                             value={formData.deadline}
                             onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
                         />
@@ -148,28 +148,28 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading }) => {
 
             <div className="grid grid-cols-2 gap-4">
                 <div>
-                    <label htmlFor="revenue" className="block text-sm font-medium text-slate-700 mb-1">
+                    <label htmlFor="revenue" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                         Revenue Earned (₹)
                     </label>
                     <input
                         type="text"
                         id="revenue"
                         required
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
+                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500"
                         value={displayValues.revenue}
                         onChange={(e) => handleCurrencyChange('revenue', e.target.value)}
                         placeholder="0"
                     />
                 </div>
                 <div>
-                    <label htmlFor="costs" className="block text-sm font-medium text-slate-700 mb-1">
+                    <label htmlFor="costs" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                         Employee Costs (₹)
                     </label>
                     <input
                         type="text"
                         id="costs"
                         required
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
+                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500"
                         value={displayValues.costs}
                         onChange={(e) => handleCurrencyChange('costs', e.target.value)}
                         placeholder="0"
@@ -177,11 +177,11 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading }) => {
                 </div>
             </div>
 
-            <div className="pt-2 border-t border-slate-100 mt-2">
-                <label className="block text-sm font-medium text-slate-500 mb-1">
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-700 mt-2">
+                <label className="block text-sm font-medium text-slate-500 dark:text-slate-400 mb-1">
                     Calculated Margin
                 </label>
-                <p className={`text-xl font-bold ${margin >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                <p className={`text-xl font-bold ${margin >= 0 ? 'text-green-600 dark:text-green-500' : 'text-red-500 dark:text-red-400'}`}>
                     {new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(margin)}
                 </p>
             </div>
@@ -190,7 +190,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading }) => {
                 <button
                     type="button"
                     onClick={onCancel}
-                    className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                    className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
                 >
                     Cancel
                 </button>
