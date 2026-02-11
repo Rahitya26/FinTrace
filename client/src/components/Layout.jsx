@@ -13,6 +13,7 @@ const Layout = ({ children }) => {
         { label: 'Dashboard', path: '/', icon: LayoutDashboard },
         { label: 'Clients', path: '/clients', icon: Users },
         { label: 'Projects', path: '/projects', icon: Briefcase },
+        { label: 'Employees', path: '/employees', icon: Users },
         { label: 'Expenses', path: '/expenses', icon: Receipt },
     ];
 

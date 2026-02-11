@@ -18,4 +18,13 @@ export const createExpense = (data) => api.post('/expenses', data);
 export const getDashboardSummary = (params) => api.get('/dashboard/summary', { params });
 export const getDashboardAnalytics = () => api.get('/dashboard/analytics');
 
+export const getEmployees = () => api.get('/employees');
+export const createEmployee = (data) => api.post('/employees', data);
+export const updateEmployee = (id, data) => api.put(`/employees/${id}`, data);
+export const deleteEmployee = (id) => api.delete(`/employees/${id}`);
+
+export const getAllocations = (projectId) => api.get(`/employees/allocations/${projectId}`);
+export const addAllocation = (data) => api.post('/employees/allocations', data);
+export const removeAllocation = (id) => api.delete(`/employees/allocations/${id}`);
+
 export default api;

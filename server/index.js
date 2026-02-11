@@ -24,11 +24,13 @@ const clientsRouter = require('./routes/clients');
 const projectsRouter = require('./routes/projects');
 const expensesRouter = require('./routes/expenses');
 const dashboardRouter = require('./routes/dashboard');
+const employeesRouter = require('./routes/employees');
 
 app.use('/api/clients', clientsRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/expenses', expensesRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/employees', employeesRouter);
 
 app.get('/', (req, res) => {
     res.send('Service Financial Tracker API is running');

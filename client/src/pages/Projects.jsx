@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import Modal from '../components/Modal';
 import ProjectForm from '../components/ProjectForm';
 import { cn, formatCurrency } from '../lib/utils';
-import { getProjects, createProject, getClients, updateProjectStatus, deleteProject } from '../lib/api';
+import { getProjects, createProject, getClients, updateProjectStatus, deleteProject, addAllocation } from '../lib/api';
 
 const PROCESS_COLORS = {
     'T&M': 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800',
@@ -205,7 +205,9 @@ const ProjectCard = ({ project, onStatusChange, onDelete }) => {
                             <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(project.revenue_earned)}</span>
                         </div>
                         <div className="flex justify-between text-sm">
-                            <span className="text-slate-500 dark:text-slate-400">Costs</span>
+                            <span className="text-slate-500 dark:text-slate-400">
+                                Costs {project.is_calculated_cost && <span title="Calculated from resources" className="text-[10px] text-primary bg-primary/10 px-1 rounded ml-1 cursor-help">Calc.</span>}
+                            </span>
                             <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(project.employee_costs)}</span>
                         </div>
                         <div className="flex justify-between text-base font-bold pt-2 border-t border-slate-50 dark:border-slate-700">
@@ -321,6 +323,24 @@ const Projects = () => {
         // Actually ProjectForm has its own loader prop.
         try {
             const response = await createProject(projectData);
+
+            // Handle Resources if present
+            if (projectData.resources && projectData.resources.length > 0) {
+                try {
+                    await Promise.all(projectData.resources.map(resource =>
+                        addAllocation({
+                            projectId: response.data.id,
+                            employeeId: resource.employeeId,
+                            allocationPercentage: resource.allocation,
+                            startDate: projectData.startDate // Default to project start
+                        })
+                    ));
+                } catch (resErr) {
+                    console.error("Failed to save resources", resErr);
+                    toast.error("Project created but failed to save resources");
+                }
+            }
+
             // Optimistically add client name to avoid refetch
             const client = clients.find(c => c.id == projectData.clientId);
             const newProject = {

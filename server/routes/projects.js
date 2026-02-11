@@ -2,17 +2,79 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// GET /api/projects - List all projects with client details
+// GET /api/projects - List all projects with client details and calculated costs
 router.get('/', async (req, res) => {
     try {
-        const query = `
-      SELECT p.*, c.name as client_name 
-      FROM projects p 
-      JOIN clients c ON p.client_id = c.id 
-      ORDER BY p.created_at DESC
-    `;
-        const result = await db.query(query);
-        res.json(result.rows);
+        // 1. Fetch Projects with Client Name
+        const projectsQuery = `
+            SELECT p.*, c.name as client_name 
+            FROM projects p 
+            JOIN clients c ON p.client_id = c.id 
+            ORDER BY p.created_at DESC
+        `;
+        const projectsResult = await db.query(projectsQuery);
+        const projects = projectsResult.rows;
+
+        // 2. Fetch Resource Plans with Employee Details
+        const plansQuery = `
+            SELECT prp.*, e.monthly_salary 
+            FROM project_resource_plans prp
+            JOIN employees e ON prp.employee_id = e.id
+        `;
+        const plansResult = await db.query(plansQuery);
+        const plans = plansResult.rows;
+
+        // 3. Merge and Calculate Costs
+        const projectsWithCosts = projects.map(project => {
+            const projectPlans = plans.filter(p => p.project_id === project.id);
+
+            if (projectPlans.length > 0) {
+                // Calculate Monthly Burn Rate
+                const monthlyBurn = projectPlans.reduce((sum, plan) => {
+                    const allocation = Number(plan.allocation_percentage) / 100;
+                    const salary = Number(plan.monthly_salary);
+                    return sum + (salary * allocation);
+                }, 0);
+
+                // Calculate Duration in Months (Pro-rated)
+                const startDate = new Date(project.start_date);
+                const endDate = project.deadline ? new Date(project.deadline) : new Date(); // Use deadline or today
+
+                // If the project is 'Active' or 'Pipeline' and no deadline, we might just use today.
+                // If 'Completed', we should use deadline or some completion date (which we don't track explicit completion date separately, assuming deadline or manual).
+                // For simplicity: Max(Start, Min(Today, Deadline if exists)) -> Duration so far or total if completed.
+
+                // Better approach for tracking:
+                // Cost = Monthly Burn * (Months from Start to Now (or End))
+
+                let calculationEndDate = new Date();
+                if (project.status === 'Completed' && project.deadline) {
+                    calculationEndDate = new Date(project.deadline);
+                } else if (project.deadline && new Date(project.deadline) < new Date()) {
+                    calculationEndDate = new Date(project.deadline); // Cap at deadline if passed?
+                }
+
+                const diffTime = Math.max(0, calculationEndDate - startDate);
+                const diffMonths = diffTime / (1000 * 60 * 60 * 24 * 30.44); // Average days in month
+
+                const computedCost = monthlyBurn * diffMonths;
+
+                return {
+                    ...project,
+                    employee_costs: computedCost.toFixed(2),
+                    // Recalculate margin since it's a generated column in DB but we are overriding cost in API
+                    margin: (Number(project.revenue_earned) - computedCost).toFixed(2),
+                    is_calculated_cost: true // Flag for UI
+                };
+            }
+
+            return {
+                ...project,
+                is_calculated_cost: false
+            };
+        });
+
+        res.json(projectsWithCosts);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Internal server error' });
