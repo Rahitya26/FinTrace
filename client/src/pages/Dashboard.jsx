@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { TrendingUp, TrendingDown, DollarSign, PieChart, Activity } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, PieChart, Activity, Calendar, X } from 'lucide-react';
 import { getDashboardSummary, getDashboardAnalytics } from '../lib/api';
 import { cn, formatCurrency } from '../lib/utils';
 import {
@@ -32,6 +32,7 @@ const Dashboard = () => {
         startDate: '',
         endDate: ''
     });
+    const [activePreset, setActivePreset] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const navigate = useNavigate();
 
@@ -74,6 +75,7 @@ const Dashboard = () => {
     const handleDateChange = (e) => {
         const { name, value } = e.target;
         setDateRange(prev => ({ ...prev, [name]: value }));
+        setActivePreset(null);
     };
 
     if (isLoading && !stats.totalRevenue) { // Only show full loading if no data
@@ -82,27 +84,84 @@ const Dashboard = () => {
 
     return (
         <div className="space-y-8">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
                     <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Financial Overview</h2>
                     <p className="text-slate-500 dark:text-slate-400 mt-1">Absolute Profit Clarity</p>
                 </div>
-                <div className="flex gap-2 items-center bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
-                    <input
-                        type="date"
-                        name="startDate"
-                        value={dateRange.startDate}
-                        onChange={handleDateChange}
-                        className="text-sm border-none focus:ring-0 text-slate-600 dark:text-slate-300 bg-transparent dark:[color-scheme:dark]"
-                    />
-                    <span className="text-slate-400">to</span>
-                    <input
-                        type="date"
-                        name="endDate"
-                        value={dateRange.endDate}
-                        onChange={handleDateChange}
-                        className="text-sm border-none focus:ring-0 text-slate-600 dark:text-slate-300 bg-transparent dark:[color-scheme:dark]"
-                    />
+
+                <div className="flex flex-col sm:flex-row gap-3">
+                    {/* Quick Selects */}
+                    <div className="flex bg-slate-100 dark:bg-slate-700/50 p-1 rounded-lg self-start sm:self-center">
+                        {[
+                            { label: 'This Month', range: 'month' },
+                            { label: 'Last 30 Days', range: '30days' },
+                            { label: 'YTD', range: 'ytd' }
+                        ].map((preset) => (
+                            <button
+                                key={preset.range}
+                                onClick={() => {
+                                    const now = new Date();
+                                    let start, end = now;
+
+                                    if (preset.range === 'month') {
+                                        start = new Date(now.getFullYear(), now.getMonth(), 1);
+                                    } else if (preset.range === '30days') {
+                                        start = new Date();
+                                        start.setDate(now.getDate() - 30);
+                                    } else if (preset.range === 'ytd') {
+                                        start = new Date(now.getFullYear(), 0, 1);
+                                    }
+
+                                    setDateRange({
+                                        startDate: start.toISOString().split('T')[0],
+                                        endDate: end.toISOString().split('T')[0]
+                                    });
+                                    setActivePreset(preset.range);
+                                }}
+                                className={cn(
+                                    "px-3 py-1.5 text-xs font-medium rounded-md transition-all",
+                                    activePreset === preset.range
+                                        ? "bg-primary text-white shadow-md font-semibold"
+                                        : "text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-600 hover:shadow-sm"
+                                )}
+                            >
+                                {preset.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Date Inputs */}
+                    <div className="flex items-center gap-2 bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
+                        <Calendar className="w-4 h-4 text-slate-400 ml-1" />
+                        <input
+                            type="date"
+                            name="startDate"
+                            value={dateRange.startDate}
+                            onChange={handleDateChange}
+                            className="text-sm border-none focus:ring-0 text-slate-600 dark:text-slate-300 bg-transparent dark:[color-scheme:dark] p-0 w-[110px]"
+                        />
+                        <span className="text-slate-300 dark:text-slate-600">|</span>
+                        <input
+                            type="date"
+                            name="endDate"
+                            value={dateRange.endDate}
+                            onChange={handleDateChange}
+                            className="text-sm border-none focus:ring-0 text-slate-600 dark:text-slate-300 bg-transparent dark:[color-scheme:dark] p-0 w-[110px]"
+                        />
+                        {/* Clear Button */}
+                        {(dateRange.startDate || dateRange.endDate) && (
+                            <button
+                                onClick={() => {
+                                    setDateRange({ startDate: '', endDate: '' });
+                                    setActivePreset(null);
+                                }}
+                                className="text-slate-400 hover:text-red-500 transition-colors"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -227,39 +286,45 @@ const Dashboard = () => {
                         </div>
 
                         {/* Donut Chart (Company Expenses) */}
-                        <div className="flex-1 flex flex-col h-40">
-                            <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Expense Breakdown</h4>
-                            <div className="flex items-center h-full">
-                                <div className="w-1/2 h-full">
+                        <div className="flex-1 flex flex-col min-h-[250px]">
+                            <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Expense Breakdown</h4>
+                            <div className="flex flex-col sm:flex-row items-center h-full gap-6">
+                                <div className="w-full sm:w-1/2 h-48 sm:h-full relative">
                                     <ResponsiveContainer width="100%" height="100%">
                                         <RechartsPieChart>
                                             <Pie
                                                 data={analytics.expenses}
                                                 cx="50%"
                                                 cy="50%"
-                                                innerRadius={25}
-                                                outerRadius={40}
+                                                innerRadius="60%"
+                                                outerRadius="80%"
                                                 paddingAngle={5}
                                                 dataKey="value"
+                                                stroke="none"
                                             >
                                                 {analytics.expenses.map((entry, index) => (
                                                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                                 ))}
                                             </Pie>
-                                            <Tooltip formatter={(value) => formatCurrency(value)} contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff' }} itemStyle={{ color: '#fff' }} />
+                                            <Tooltip formatter={(value) => formatCurrency(value)} contentStyle={{ backgroundColor: '#1e293b', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '12px' }} itemStyle={{ color: '#fff' }} />
                                         </RechartsPieChart>
                                     </ResponsiveContainer>
+                                    {/* Center Text for Total if desired, or just clean look */}
                                 </div>
-                                <div className="w-1/2 pl-4 text-xs space-y-1 overflow-y-auto max-h-32">
-                                    {analytics.expenses.map((entry, index) => (
-                                        <div key={index} className="flex items-center justify-between">
-                                            <div className="flex items-center">
-                                                <div className="w-2 h-2 rounded-full mr-2" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
-                                                <span className="text-slate-600 dark:text-slate-300 truncate max-w-[80px]">{entry.name}</span>
+                                <div className="w-full sm:w-1/2 text-sm space-y-3 overflow-y-auto max-h-48 pr-2 custom-scrollbar">
+                                    {analytics.expenses.length > 0 ? (
+                                        analytics.expenses.map((entry, index) => (
+                                            <div key={index} className="flex items-center justify-between group">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
+                                                    <span className="text-slate-600 dark:text-slate-300 font-medium truncate max-w-[120px]" title={entry.name}>{entry.name}</span>
+                                                </div>
+                                                <span className="font-semibold text-slate-900 dark:text-white tabular-nums">{formatCurrency(entry.value)}</span>
                                             </div>
-                                            <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(entry.value)}</span>
-                                        </div>
-                                    ))}
+                                        ))
+                                    ) : (
+                                        <p className="text-slate-400 text-center py-4">No expenses recorded</p>
+                                    )}
                                 </div>
                             </div>
                         </div>

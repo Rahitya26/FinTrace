@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 
 const PROCESS_TYPES = ['T&M', 'Fixed Bid', 'Fixed Value'];
 
@@ -51,12 +52,16 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading }) => {
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        onSubmit({
-            ...formData,
-            revenue: parseFloat(formData.revenue) || 0,
-            costs: parseFloat(formData.costs) || 0,
-            margin
-        });
+        try {
+            onSubmit({
+                ...formData,
+                revenue: parseFloat(formData.revenue) || 0,
+                costs: parseFloat(formData.costs) || 0,
+                margin
+            });
+        } catch (err) {
+            toast.error("Invalid form data");
+        }
     };
 
     return (

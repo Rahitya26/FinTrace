@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { Toaster } from 'sonner';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Clients from './pages/Clients';
@@ -9,6 +10,7 @@ import Expenses from './pages/Expenses';
 function App() {
   return (
     <Router>
+      <Toaster position="top-right" richColors />
       <Layout>
         <Routes>
           <Route path="/" element={<Dashboard />} />

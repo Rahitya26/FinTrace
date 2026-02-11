@@ -1,17 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Calendar, Receipt, Filter } from 'lucide-react';
+import { Plus, Search, Calendar, Receipt, Filter, X } from 'lucide-react';
 import Modal from '../components/Modal';
 import ExpenseForm from '../components/ExpenseForm';
 import { getExpenses, createExpense } from '../lib/api';
 import { format } from 'date-fns';
-import { formatCurrency } from '../lib/utils';
+import { cn, formatCurrency } from '../lib/utils';
 
 const Expenses = () => {
     const [expenses, setExpenses] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-    const [dateFilter, setDateFilter] = useState('');
+    const [dateRange, setDateRange] = useState({
+        startDate: '',
+        endDate: ''
+    });
+    const [activePreset, setActivePreset] = useState(null);
     const [error, setError] = useState(null);
 
     useEffect(() => {
@@ -46,7 +50,23 @@ const Expenses = () => {
         const matchesSearch =
             expense.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
             expense.description.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesDate = dateFilter ? expense.date === dateFilter : true;
+
+        // Date Range Filtering
+        let matchesDate = true;
+        if (dateRange.startDate || dateRange.endDate) {
+            const expenseDate = new Date(expense.date);
+            const start = dateRange.startDate ? new Date(dateRange.startDate) : null;
+            const end = dateRange.endDate ? new Date(dateRange.endDate) : null;
+
+            // Reset hours for accurate comparison
+            if (start) start.setHours(0, 0, 0, 0);
+            if (end) end.setHours(23, 59, 59, 999);
+            if (expense.date) expenseDate.setHours(0, 0, 0, 0);
+
+            if (start && expenseDate < start) matchesDate = false;
+            if (end && expenseDate > end) matchesDate = false;
+        }
+
         return matchesSearch && matchesDate;
     });
 
@@ -70,35 +90,96 @@ const Expenses = () => {
 
             <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
                 {/* Toolbar */}
-                <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex flex-col md:flex-row gap-4 justify-between items-center bg-slate-50 dark:bg-slate-900">
-                    <div className="flex items-center w-full md:w-auto relative">
+                <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex flex-col xl:flex-row gap-4 justify-between items-start xl:items-center bg-slate-50 dark:bg-slate-900">
+                    <div className="flex items-center w-full xl:w-auto relative flex-1 max-w-md">
                         <Search className="w-4 h-4 text-slate-400 absolute left-3" />
                         <input
                             type="text"
                             placeholder="Search expenses..."
-                            className="pl-9 pr-4 py-2 w-full md:w-64 text-sm border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400"
+                            className="pl-9 pr-4 py-2 w-full text-sm border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400"
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                     </div>
-                    <div className="flex items-center gap-2 w-full md:w-auto">
-                        <div className="relative flex-1 md:flex-none">
-                            <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+
+                    <div className="flex flex-col sm:flex-row gap-3 w-full xl:w-auto">
+                        {/* Quick Selects */}
+                        <div className="flex bg-white dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
+                            {[
+                                { label: 'This Month', range: 'month' },
+                                { label: 'Last 30 Days', range: '30days' },
+                                { label: 'YTD', range: 'ytd' }
+                            ].map((preset) => (
+                                <button
+                                    key={preset.range}
+                                    onClick={() => {
+                                        const now = new Date();
+                                        let start, end = now;
+
+                                        if (preset.range === 'month') {
+                                            start = new Date(now.getFullYear(), now.getMonth(), 1);
+                                        } else if (preset.range === '30days') {
+                                            start = new Date();
+                                            start.setDate(now.getDate() - 30);
+                                        } else if (preset.range === 'ytd') {
+                                            start = new Date(now.getFullYear(), 0, 1);
+                                        }
+
+                                        setDateRange({
+                                            startDate: start.toISOString().split('T')[0],
+                                            endDate: end.toISOString().split('T')[0]
+                                        });
+                                        setActivePreset(preset.range);
+                                    }}
+                                    className={cn(
+                                        "px-3 py-1.5 text-xs font-medium rounded-md transition-all whitespace-nowrap",
+                                        activePreset === preset.range
+                                            ? "bg-primary text-white shadow-md font-semibold"
+                                            : "text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+                                    )}
+                                >
+                                    {preset.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Date Inputs */}
+                        <div className="flex items-center gap-2 bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-200 dark:border-slate-700">
+                            <Calendar className="w-4 h-4 text-slate-400 ml-1" />
                             <input
                                 type="date"
-                                className="pl-9 pr-4 py-2 w-full md:w-auto text-sm border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary bg-white dark:bg-slate-800 text-slate-900 dark:text-white dark:[color-scheme:dark]"
-                                value={dateFilter}
-                                onChange={(e) => setDateFilter(e.target.value)}
+                                name="startDate"
+                                value={dateRange.startDate}
+                                onChange={(e) => {
+                                    setDateRange(prev => ({ ...prev, startDate: e.target.value }));
+                                    setActivePreset(null);
+                                }}
+                                className="text-sm border-none focus:ring-0 text-slate-600 dark:text-slate-300 bg-transparent dark:[color-scheme:dark] p-0 w-[110px]"
                             />
+                            <span className="text-slate-300 dark:text-slate-600">|</span>
+                            <input
+                                type="date"
+                                name="endDate"
+                                value={dateRange.endDate}
+                                onChange={(e) => {
+                                    setDateRange(prev => ({ ...prev, endDate: e.target.value }));
+                                    setActivePreset(null);
+                                }}
+                                className="text-sm border-none focus:ring-0 text-slate-600 dark:text-slate-300 bg-transparent dark:[color-scheme:dark] p-0 w-[110px]"
+                            />
+                            {/* Clear Button */}
+                            {(dateRange.startDate || dateRange.endDate) && (
+                                <button
+                                    onClick={() => {
+                                        setDateRange({ startDate: '', endDate: '' });
+                                        setActivePreset(null);
+                                    }}
+                                    className="text-slate-400 hover:text-red-500 transition-colors"
+                                >
+                                    <X className="w-4 h-4" />
+                                </button>
+                            )}
                         </div>
-                        {dateFilter && (
-                            <button
-                                onClick={() => setDateFilter('')}
-                                className="text-xs text-slate-500 hover:text-slate-700 underline"
-                            >
-                                Clear
-                            </button>
-                        )}
                     </div>
                 </div>
 
