@@ -114,6 +114,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading }) => {
 
     const addResource = () => {
         if (!newResource.employeeId) return;
+
         const emp = employees.find(e => e.id === Number(newResource.employeeId));
         if (!emp) return;
 
@@ -307,9 +308,13 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading }) => {
                             onChange={(e) => setNewResource({ ...newResource, employeeId: e.target.value })}
                         >
                             <option value="">Select Employee...</option>
-                            {employees.map(e => (
-                                <option key={e.id} value={e.id}>{e.name} ({formatCurrency(e.monthly_salary)}/mo)</option>
-                            ))}
+                            {employees
+                                .filter(e => !resources.some(r => Number(r.employeeId) === e.id)) // Filter out already assigned
+                                .map(e => (
+                                    <option key={e.id} value={e.id}>
+                                        {e.name} - {e.role} ({formatCurrency(e.monthly_salary)}/mo)
+                                    </option>
+                                ))}
                         </select>
                     </div>
                     <div className="w-24">

@@ -141,71 +141,69 @@ const Employees = () => {
                     </div>
                 </div>
 
-                {/* List */}
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
-                        <thead className="bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-400 font-medium border-b border-slate-200 dark:border-slate-700">
-                            <tr>
-                                <th className="px-6 py-3">Name</th>
-                                <th className="px-6 py-3">Role</th>
-                                <th className="px-6 py-3">Monthly Salary</th>
-                                <th className="px-6 py-3">Status</th>
-                                <th className="px-6 py-3 text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                            {isLoading ? (
-                                <tr>
-                                    <td colSpan="5" className="px-6 py-12 text-center text-slate-500">Loading...</td>
-                                </tr>
-                            ) : filteredEmployees.length === 0 ? (
-                                <tr>
-                                    <td colSpan="5" className="px-6 py-12 text-center text-slate-500">No employees found.</td>
-                                </tr>
-                            ) : (
-                                filteredEmployees.map((employee) => (
-                                    <tr key={employee.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                                        <td className="px-6 py-3 text-slate-900 dark:text-white font-medium">
-                                            {employee.name}
-                                        </td>
-                                        <td className="px-6 py-3 text-slate-600 dark:text-slate-300">
-                                            {employee.role}
-                                        </td>
-                                        <td className="px-6 py-3 text-slate-600 dark:text-slate-300 font-mono">
-                                            {formatCurrency(employee.monthly_salary)}
-                                        </td>
-                                        <td className="px-6 py-3">
+                {/* List - Compact Cards Layout */}
+                {isLoading ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {[1, 2, 3, 4].map(i => (
+                            <div key={i} className="bg-white dark:bg-slate-800 h-20 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 animate-pulse"></div>
+                        ))}
+                    </div>
+                ) : filteredEmployees.length === 0 ? (
+                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-12 text-center text-slate-500">
+                        <Users className="w-12 h-12 mx-auto text-slate-300 mb-4" />
+                        <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-1">No employees found</h3>
+                        <p>Get started by adding your first team member.</p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
+                        {filteredEmployees.map((employee) => (
+                            <div
+                                key={employee.id}
+                                className="bg-white dark:bg-slate-800 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 hover:shadow-md transition-all group relative overflow-hidden"
+                            >
+                                <div className="p-4 flex items-center gap-3">
+                                    {/* Avatar */}
+                                    <div className="flex-shrink-0 w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 flex items-center justify-center font-semibold text-sm">
+                                        {employee.name.charAt(0).toUpperCase()}
+                                    </div>
+
+                                    {/* Info */}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center justify-between">
+                                            <h3 className="text-sm font-medium text-slate-900 dark:text-white truncate pr-6">{employee.name}</h3>
+                                        </div>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{employee.role}</p>
+                                        <div className="flex items-center gap-2 mt-1.5">
                                             <span className={cn(
-                                                "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium",
-                                                employee.status === 'Active'
-                                                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300"
-                                                    : "bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-300"
-                                            )}>
-                                                {employee.status}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-3 text-right">
-                                            <div className="flex items-center justify-end gap-2">
-                                                <button
-                                                    onClick={() => openEditModal(employee)}
-                                                    className="p-1 text-slate-400 hover:text-primary transition-colors"
-                                                >
-                                                    <Edit2 className="w-4 h-4" />
-                                                </button>
-                                                <button
-                                                    onClick={() => setEmployeeToDelete(employee)}
-                                                    className="p-1 text-slate-400 hover:text-red-500 transition-colors"
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
+                                                "flex-shrink-0 inline-block w-2 h-2 rounded-full",
+                                                employee.status === 'Active' ? "bg-emerald-500" : "bg-slate-300"
+                                            )} title={employee.status} />
+                                            <span className="text-xs font-mono text-slate-600 dark:text-slate-300">{formatCurrency(employee.monthly_salary)}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Hover Actions - Absolute Top Right */}
+                                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 dark:bg-slate-800/90 rounded-md p-0.5 backdrop-blur-sm">
+                                    <button
+                                        onClick={() => openEditModal(employee)}
+                                        className="p-1 text-slate-400 hover:text-primary transition-colors"
+                                        title="Edit"
+                                    >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                        onClick={() => setEmployeeToDelete(employee)}
+                                        className="p-1 text-slate-400 hover:text-red-500 transition-colors"
+                                        title="Delete"
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Add/Edit Modal */}
