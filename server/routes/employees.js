@@ -5,8 +5,73 @@ const db = require('../db');
 // GET /api/employees - List all employees
 router.get('/', async (req, res) => {
     try {
-        const result = await db.query('SELECT * FROM employees ORDER BY name ASC');
-        res.json(result.rows);
+        if (!req.query.page) {
+            // Backward compatibility for dropdowns
+            const result = await db.query('SELECT * FROM employees ORDER BY name ASC');
+            return res.json(result.rows);
+        }
+
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 50;
+        const offset = (page - 1) * limit;
+        const { search, role, specialization, projectId } = req.query;
+
+        let whereClauses = [];
+        let queryParams = [];
+        let paramIndex = 1;
+
+        let joinClause = '';
+
+        if (projectId) {
+            joinClause = 'JOIN project_resource_plans prp ON e.id = prp.employee_id';
+            whereClauses.push(`prp.project_id = $${paramIndex}`);
+            queryParams.push(projectId);
+            paramIndex++;
+        }
+
+        if (search) {
+            whereClauses.push(`(e.name ILIKE $${paramIndex} OR e.role ILIKE $${paramIndex})`);
+            queryParams.push(`%${search}%`);
+            paramIndex++;
+        }
+
+        if (role) {
+            whereClauses.push(`e.role = $${paramIndex}`);
+            queryParams.push(role);
+            paramIndex++;
+        }
+
+        if (specialization) {
+            whereClauses.push(`e.specialization = $${paramIndex}`);
+            queryParams.push(specialization);
+            paramIndex++;
+        }
+
+        const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+        const countQuery = `SELECT COUNT(DISTINCT e.id) FROM employees e ${joinClause} ${whereString}`;
+        const countResult = await db.query(countQuery, queryParams);
+        const totalItems = parseInt(countResult.rows[0].count);
+        const totalPages = Math.ceil(totalItems / limit);
+
+        const dataQuery = `
+            SELECT DISTINCT e.* FROM employees e
+            ${joinClause}
+            ${whereString} 
+            ORDER BY e.name ASC 
+            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+        `;
+        const result = await db.query(dataQuery, [...queryParams, limit, offset]);
+
+        res.json({
+            data: result.rows,
+            pagination: {
+                total: totalItems,
+                page,
+                limit,
+                totalPages
+            }
+        });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Internal server error' });
@@ -29,11 +94,11 @@ router.get('/:id', async (req, res) => {
 
 // POST /api/employees - Create new employee
 router.post('/', async (req, res) => {
-    const { name, role, monthly_salary, status } = req.body;
+    const { name, role, monthly_salary, status, specialization, hourly_rate } = req.body;
     try {
         const result = await db.query(
-            'INSERT INTO employees (name, role, monthly_salary, status) VALUES ($1, $2, $3, $4) RETURNING *',
-            [name, role, monthly_salary || 0, status || 'Active']
+            'INSERT INTO employees (name, role, monthly_salary, status, specialization, hourly_rate) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            [name, role, monthly_salary || 0, status || 'Active', specialization || 'T&M', hourly_rate || 0]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -44,11 +109,11 @@ router.post('/', async (req, res) => {
 
 // PUT /api/employees/:id - Update employee
 router.put('/:id', async (req, res) => {
-    const { name, role, monthly_salary, status } = req.body;
+    const { name, role, monthly_salary, status, specialization, hourly_rate } = req.body;
     try {
         const result = await db.query(
-            'UPDATE employees SET name = $1, role = $2, monthly_salary = $3, status = $4 WHERE id = $5 RETURNING *',
-            [name, role, monthly_salary, status, req.params.id]
+            'UPDATE employees SET name = $1, role = $2, monthly_salary = $3, status = $4, specialization = $5, hourly_rate = $6 WHERE id = $7 RETURNING *',
+            [name, role, monthly_salary, status, specialization, hourly_rate, req.params.id]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Employee not found' });

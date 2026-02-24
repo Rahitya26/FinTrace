@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Search, Briefcase, Users, ChevronDown, Trash2, Calendar, X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import Modal from '../components/Modal';
@@ -41,6 +41,7 @@ const ProjectSkeleton = () => (
 
 const ProjectCard = ({ project, onStatusChange, onDelete }) => {
     const [isExpanded, setIsExpanded] = useState(false);
+    const navigate = useNavigate();
 
     const calculateProgress = (start, end) => {
         if (!start || !end) return 0;
@@ -114,6 +115,16 @@ const ProjectCard = ({ project, onStatusChange, onDelete }) => {
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
+                                navigate(`/employees?projectId=${project.id}`);
+                            }}
+                            className="p-1 text-slate-400 hover:text-primary hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-full transition-colors"
+                            title="View Team"
+                        >
+                            <Users className="w-4 h-4" />
+                        </button>
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
                                 onDelete(project.id);
                             }}
                             className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors"
@@ -122,6 +133,7 @@ const ProjectCard = ({ project, onStatusChange, onDelete }) => {
                             <Trash2 className="w-4 h-4" />
                         </button>
                     </div>
+
                     {/* Status Dropdown - Stop Propagation */}
                     <div onClick={(e) => e.stopPropagation()}>
                         <select
@@ -175,8 +187,8 @@ const ProjectCard = ({ project, onStatusChange, onDelete }) => {
                             </div>
                         </div>
 
-                        {/* Fixed Bid Progress Bar */}
-                        {project.type === 'Fixed Bid' && project.deadline && (
+                        {/* Fixed Bid / Fixed Value Progress Bar */}
+                        {(project.type === 'Fixed Bid' || project.type === 'Fixed Value') && project.deadline && (
                             <div className="mt-2">
                                 <div className="flex justify-between text-xs mb-1">
                                     <span className={isCritical ? "text-red-600 dark:text-red-400 font-bold" : "text-slate-500 dark:text-slate-400"}>
@@ -244,7 +256,10 @@ const Projects = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [searchParams, setSearchParams] = useSearchParams();
+    const navigate = useNavigate();
     const [searchTerm, setSearchTerm] = useState(searchParams.get('search') || '');
+    const [page, setPage] = useState(1);
+    const [pagination, setPagination] = useState({ total: 0, totalPages: 1, limit: 20 });
     const [error, setError] = useState(null);
     const [dateRange, setDateRange] = useState({
         startDate: '',
@@ -257,13 +272,23 @@ const Projects = () => {
 
     useEffect(() => {
         fetchData();
-    }, []);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [page, searchTerm, searchParams.get('type'), dateRange.startDate, dateRange.endDate]);
 
     const fetchData = async () => {
         setIsLoading(true);
         try {
-            const [projectsRes, clientsRes] = await Promise.all([getProjects(), getClients()]);
-            setProjects(projectsRes.data);
+            const params = {
+                page,
+                limit: 20,
+                search: searchTerm,
+                type: searchParams.get('type') || '',
+                startDate: dateRange.startDate,
+                endDate: dateRange.endDate
+            };
+            const [projectsRes, clientsRes] = await Promise.all([getProjects(params), getClients()]);
+            setProjects(projectsRes.data.data);
+            setPagination(projectsRes.data.pagination);
             setClients(clientsRes.data);
         } catch (err) {
             setError('Failed to fetch data');
@@ -358,32 +383,7 @@ const Projects = () => {
         }
     };
 
-    const filteredProjects = projects.filter(project => {
-        const matchesSearch = project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            (project.client_name || '').toLowerCase().includes(searchTerm.toLowerCase());
-
-        const typeParam = searchParams.get('type');
-        const matchesType = typeParam ? project.type === typeParam : true;
-
-        // Date Range Filtering
-        let matchesDate = true;
-        if (dateRange.startDate || dateRange.endDate) {
-            const projectDate = new Date(project.start_date);
-            const start = dateRange.startDate ? new Date(dateRange.startDate) : null;
-            const end = dateRange.endDate ? new Date(dateRange.endDate) : null;
-
-            // Reset hours for accurate comparison
-            if (start) start.setHours(0, 0, 0, 0);
-            if (end) end.setHours(23, 59, 59, 999);
-            if (project.start_date) projectDate.setHours(0, 0, 0, 0);
-
-            if (start && projectDate < start) matchesDate = false;
-            if (end && projectDate > end) matchesDate = false;
-            if (!project.start_date) matchesDate = false; // Exclude if no start date
-        }
-
-        return matchesSearch && matchesType && matchesDate;
-    }).sort((a, b) => {
+    const filteredProjects = [...projects].sort((a, b) => {
         // Sort 'Completed' to the bottom
         if (a.status === 'Completed' && b.status !== 'Completed') return 1;
         if (a.status !== 'Completed' && b.status === 'Completed') return -1;
@@ -432,6 +432,7 @@ const Projects = () => {
                 const newParams = new URLSearchParams(searchParams);
                 newParams.delete('type');
                 setSearchParams(newParams);
+                setPage(1);
             }
         });
     }
@@ -442,19 +443,75 @@ const Projects = () => {
             onClear: () => {
                 setDateRange({ startDate: '', endDate: '' });
                 setActivePreset(null);
+                setPage(1);
             }
         });
     }
 
     return (
         <div>
-            {/* Header and Actions */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
-                <div>
-                    <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Projects</h2>
-                    <p className="text-slate-500 dark:text-slate-400 mt-1">Track project profitability and margins</p>
+            {/* Process View Header - Integrated Tabs */}
+            {typeParam && (
+                <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-700 pb-4">
+                    <div>
+                        <h2 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                            {typeParam} Projects
+                            <span className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full border border-primary/20">
+                                Process
+                            </span>
+                        </h2>
+                        <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
+                            Track profitability for {typeParam} projects
+                        </p>
+                    </div>
+
+                    <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg self-start sm:self-center">
+                        <button
+                            onClick={() => navigate(`/employees?specialization=${encodeURIComponent(typeParam)}`)}
+                            className="px-4 py-2 text-sm font-medium text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors flex items-center gap-2"
+                        >
+                            <Users className="w-4 h-4" />
+                            Employees
+                        </button>
+                        <button
+                            className="px-4 py-2 text-sm font-medium text-slate-900 dark:text-white bg-white dark:bg-slate-700 shadow-sm rounded-md transition-all flex items-center gap-2"
+                        >
+                            <Briefcase className="w-4 h-4" />
+                            Projects
+                        </button>
+                    </div>
                 </div>
-                <div className="flex gap-2">
+            )}
+
+            {!typeParam && (
+                /* Original Header - Show only if NOT in Process View */
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 gap-4">
+                    <div>
+                        <h2 className="text-3xl font-bold text-slate-900 dark:text-white">Projects</h2>
+                        <p className="text-slate-500 dark:text-slate-400 mt-1">Track project profitability and margins</p>
+                    </div>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={downloadCSV}
+                            className="bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center"
+                        >
+                            <Briefcase className="w-5 h-5 mr-2" />
+                            Export CSV
+                        </button>
+                        <button
+                            onClick={() => setIsModalOpen(true)}
+                            className="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center"
+                        >
+                            <Plus className="w-5 h-5 mr-2" />
+                            Add Project
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Add Button for Process View (Optional place - matching Employees) */}
+            {typeParam && (
+                <div className="flex justify-end gap-2 mb-4">
                     <button
                         onClick={downloadCSV}
                         className="bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center"
@@ -467,10 +524,10 @@ const Projects = () => {
                         className="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center"
                     >
                         <Plus className="w-5 h-5 mr-2" />
-                        Add Project
+                        Add {typeParam} Project
                     </button>
                 </div>
-            </div>
+            )}
 
             {/* Filter Bar */}
             <div className="flex flex-col lg:flex-row gap-4 mb-6">
@@ -483,7 +540,10 @@ const Projects = () => {
                         placeholder="Search projects or clients..."
                         className="pl-10 w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors bg-white dark:bg-slate-800 text-slate-900 dark:text-white placeholder-slate-400"
                         value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
+                        onChange={(e) => {
+                            setSearchTerm(e.target.value);
+                            setPage(1);
+                        }}
                     />
                 </div>
 
@@ -493,6 +553,7 @@ const Projects = () => {
                         {[
                             { label: 'This Month', range: 'month' },
                             { label: 'Last 30 Days', range: '30days' },
+                            { label: 'Last 6 Months', range: '6months' },
                             { label: 'YTD', range: 'ytd' }
                         ].map((preset) => (
                             <button
@@ -506,6 +567,9 @@ const Projects = () => {
                                     } else if (preset.range === '30days') {
                                         start = new Date();
                                         start.setDate(now.getDate() - 30);
+                                    } else if (preset.range === '6months') {
+                                        start = new Date();
+                                        start.setMonth(now.getMonth() - 6);
                                     } else if (preset.range === 'ytd') {
                                         start = new Date(now.getFullYear(), 0, 1);
                                     }
@@ -515,6 +579,7 @@ const Projects = () => {
                                         endDate: end.toISOString().split('T')[0]
                                     });
                                     setActivePreset(preset.range);
+                                    setPage(1);
                                 }}
                                 className={cn(
                                     "px-3 py-1.5 text-xs font-medium rounded-md transition-all",
@@ -538,6 +603,7 @@ const Projects = () => {
                             onChange={(e) => {
                                 setDateRange(prev => ({ ...prev, startDate: e.target.value }));
                                 setActivePreset(null);
+                                setPage(1);
                             }}
                             className="text-sm border-none focus:ring-0 text-slate-600 dark:text-slate-300 bg-transparent dark:[color-scheme:dark] p-0 w-[110px]"
                         />
@@ -549,6 +615,7 @@ const Projects = () => {
                             onChange={(e) => {
                                 setDateRange(prev => ({ ...prev, endDate: e.target.value }));
                                 setActivePreset(null);
+                                setPage(1);
                             }}
                             className="text-sm border-none focus:ring-0 text-slate-600 dark:text-slate-300 bg-transparent dark:[color-scheme:dark] p-0 w-[110px]"
                         />
@@ -558,6 +625,7 @@ const Projects = () => {
                                 onClick={() => {
                                     setDateRange({ startDate: '', endDate: '' });
                                     setActivePreset(null);
+                                    setPage(1);
                                 }}
                                 className="text-slate-400 hover:text-red-500 transition-colors"
                             >
@@ -569,84 +637,118 @@ const Projects = () => {
             </div>
 
             {/* Active Filter Chips */}
-            {activeFilters.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-6 animate-in fade-in slide-in-from-top-2">
-                    {activeFilters.map(filter => (
-                        <div key={filter.id} className="inline-flex items-center bg-slate-100 dark:bg-slate-700/50 text-slate-700 dark:text-slate-200 rounded-full px-3 py-1 text-sm border border-slate-200 dark:border-slate-600">
-                            <span>{filter.label}</span>
-                            <button
-                                onClick={filter.onClear}
-                                className="ml-2 p-0.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-                            >
-                                <X className="w-3 h-3" />
-                            </button>
+            {
+                activeFilters.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-6 animate-in fade-in slide-in-from-top-2">
+                        {activeFilters.map(filter => (
+                            <div key={filter.id} className="inline-flex items-center bg-slate-100 dark:bg-slate-700/50 text-slate-700 dark:text-slate-200 rounded-full px-3 py-1 text-sm border border-slate-200 dark:border-slate-600">
+                                <span>{filter.label}</span>
+                                <button
+                                    onClick={filter.onClear}
+                                    className="ml-2 p-0.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
+                            </div>
+                        ))}
+                        <button
+                            onClick={() => {
+                                const newParams = new URLSearchParams(searchParams);
+                                newParams.delete('type');
+                                setSearchParams(newParams);
+                                setDateRange({ startDate: '', endDate: '' });
+                                setSearchTerm('');
+                                setActivePreset(null);
+                                setPage(1);
+                            }}
+                            className="text-sm text-primary hover:underline self-center ml-2"
+                        >
+                            Clear all
+                        </button>
+                    </div>
+                )
+            }
+
+
+            {
+                isLoading ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {[...Array(6)].map((_, i) => <ProjectSkeleton key={i} />)}
+                    </div>
+                ) : filteredProjects.length === 0 ? (
+                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-12 text-center text-slate-500 dark:text-slate-400">
+                        <Briefcase className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-4" />
+                        <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-1">No projects found</h3>
+                        <p>Start tracking by adding a new project.</p>
+                    </div>
+                ) : (
+                    <div className="space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-start">
+                            {filteredProjects.map((project) => (
+                                <ProjectCard
+                                    key={project.id}
+                                    project={project}
+                                    onStatusChange={handleStatusChange}
+                                    onDelete={handleDeleteProject}
+                                />
+                            ))}
                         </div>
-                    ))}
-                    <button
-                        onClick={() => {
-                            const newParams = new URLSearchParams(searchParams);
-                            newParams.delete('type');
-                            setSearchParams(newParams);
-                            setDateRange({ startDate: '', endDate: '' });
-                            setSearchTerm('');
-                            setActivePreset(null);
-                        }}
-                        className="text-sm text-primary hover:underline self-center ml-2"
-                    >
-                        Clear all
-                    </button>
-                </div>
-            )}
 
-
-            {isLoading ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {[...Array(6)].map((_, i) => <ProjectSkeleton key={i} />)}
-                </div>
-            ) : filteredProjects.length === 0 ? (
-                <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 p-12 text-center text-slate-500 dark:text-slate-400">
-                    <Briefcase className="w-12 h-12 mx-auto text-slate-300 dark:text-slate-600 mb-4" />
-                    <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-1">No projects found</h3>
-                    <p>Start tracking by adding a new project.</p>
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-start">
-                    {filteredProjects.map((project) => (
-                        <ProjectCard
-                            key={project.id}
-                            project={project}
-                            onStatusChange={handleStatusChange}
-                            onDelete={handleDeleteProject}
-                        />
-                    ))}
-                </div>
-            )}
+                        {/* Pagination Controls */}
+                        {pagination.totalPages > 1 && (
+                            <div className="flex items-center justify-between border-t border-slate-200 dark:border-slate-700 pt-6 mt-6">
+                                <div className="text-sm text-slate-500 dark:text-slate-400">
+                                    Showing <span className="font-medium text-slate-900 dark:text-white">{((page - 1) * pagination.limit) + 1}</span> to <span className="font-medium text-slate-900 dark:text-white">{Math.min(page * pagination.limit, pagination.total)}</span> of <span className="font-medium text-slate-900 dark:text-white">{pagination.total}</span> results
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => setPage(p => Math.max(1, p - 1))}
+                                        disabled={page === 1}
+                                        className="px-3 py-1 text-sm border border-slate-200 dark:border-slate-700 rounded hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 transition-colors"
+                                    >
+                                        Previous
+                                    </button>
+                                    <button
+                                        onClick={() => setPage(p => Math.min(pagination.totalPages, p + 1))}
+                                        disabled={page >= pagination.totalPages}
+                                        className="px-3 py-1 text-sm border border-slate-200 dark:border-slate-700 rounded hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 transition-colors"
+                                    >
+                                        Next
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )
+            }
 
             {/* Modal for adding project */}
-            {isModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-700">
-                            <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Add New Project</h3>
-                            <button
-                                onClick={() => setIsModalOpen(false)}
-                                className="text-slate-400 hover:text-slate-500 transition-colors"
-                                type="button"
-                            >
-                                <Plus className="w-5 h-5 transform rotate-45" />
-                            </button>
-                        </div>
-                        <div className="p-6">
-                            <ProjectForm
-                                clients={clients}
-                                onSubmit={handleAddProject}
-                                onCancel={() => setIsModalOpen(false)}
-                                isLoading={isLoading}
-                            />
+            {
+                isModalOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+                        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-700">
+                                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Add New Project</h3>
+                                <button
+                                    onClick={() => setIsModalOpen(false)}
+                                    className="text-slate-400 hover:text-slate-500 transition-colors"
+                                    type="button"
+                                >
+                                    <Plus className="w-5 h-5 transform rotate-45" />
+                                </button>
+                            </div>
+                            <div className="p-6">
+                                <ProjectForm
+                                    clients={clients}
+                                    onSubmit={handleAddProject}
+                                    onCancel={() => setIsModalOpen(false)}
+                                    isLoading={isLoading}
+                                />
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Delete Confirmation Modal */}
             <Modal
@@ -680,7 +782,7 @@ const Projects = () => {
                     </div>
                 </div>
             </Modal>
-        </div>
+        </div >
     );
 };
 

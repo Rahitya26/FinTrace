@@ -96,6 +96,7 @@ const Dashboard = () => {
                         {[
                             { label: 'This Month', range: 'month' },
                             { label: 'Last 30 Days', range: '30days' },
+                            { label: 'Last 6 Months', range: '6months' },
                             { label: 'YTD', range: 'ytd' }
                         ].map((preset) => (
                             <button
@@ -109,6 +110,9 @@ const Dashboard = () => {
                                     } else if (preset.range === '30days') {
                                         start = new Date();
                                         start.setDate(now.getDate() - 30);
+                                    } else if (preset.range === '6months') {
+                                        start = new Date();
+                                        start.setMonth(now.getMonth() - 6);
                                     } else if (preset.range === 'ytd') {
                                         start = new Date(now.getFullYear(), 0, 1);
                                     }
@@ -120,7 +124,7 @@ const Dashboard = () => {
                                     setActivePreset(preset.range);
                                 }}
                                 className={cn(
-                                    "px-3 py-1.5 text-xs font-medium rounded-md transition-all",
+                                    "px-3 py-1.5 text-xs font-medium rounded-md transition-all whitespace-nowrap",
                                     activePreset === preset.range
                                         ? "bg-primary text-white shadow-md font-semibold"
                                         : "text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-600 hover:shadow-sm"
@@ -285,7 +289,7 @@ const Dashboard = () => {
                             </ResponsiveContainer>
                         </div>
 
-                        {/* Donut Chart (Company Expenses) */}
+                        {/* Pie Chart (Company Expenses) */}
                         <div className="flex-1 flex flex-col min-h-[250px]">
                             <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Expense Breakdown</h4>
                             <div className="flex flex-col sm:flex-row items-center h-full gap-6">
@@ -296,9 +300,7 @@ const Dashboard = () => {
                                                 data={analytics.expenses}
                                                 cx="50%"
                                                 cy="50%"
-                                                innerRadius="60%"
-                                                outerRadius="80%"
-                                                paddingAngle={5}
+                                                outerRadius="90%"
                                                 dataKey="value"
                                                 stroke="none"
                                             >

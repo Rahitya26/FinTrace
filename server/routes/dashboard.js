@@ -74,15 +74,34 @@ router.get('/analytics', async (req, res) => {
           date_trunc('month', CURRENT_DATE),
           '1 month'::interval
         ) as month
+      ),
+      monthly_revenue AS (
+        SELECT 
+          months.month,
+          SUM(
+            p.revenue_earned / 
+            GREATEST(1, EXTRACT(year from age(COALESCE(p.deadline, CURRENT_DATE), p.start_date)) * 12 + EXTRACT(month from age(COALESCE(p.deadline, CURRENT_DATE), p.start_date)) + 1)
+          ) as total_revenue
+        FROM projects p
+        JOIN months ON months.month >= date_trunc('month', p.start_date) 
+                   AND months.month <= date_trunc('month', COALESCE(p.deadline, CURRENT_DATE))
+        GROUP BY 1
+      ),
+      monthly_expenses AS (
+        SELECT 
+          date_trunc('month', date) as month, 
+          SUM(amount) as total_expenses
+        FROM company_expenses
+        WHERE date >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'
+        GROUP BY 1
       )
       SELECT 
         TO_CHAR(months.month, 'Mon') as name,
-        COALESCE(SUM(p.revenue_earned), 0) as revenue,
-        COALESCE(SUM(ce.amount), 0) as expenses
+        COALESCE(r.total_revenue, 0) as revenue,
+        COALESCE(e.total_expenses, 0) as expenses
       FROM months
-      LEFT JOIN projects p ON date_trunc('month', p.start_date) = months.month
-      LEFT JOIN company_expenses ce ON date_trunc('month', ce.date) = months.month
-      GROUP BY months.month
+      LEFT JOIN monthly_revenue r ON r.month = months.month
+      LEFT JOIN monthly_expenses e ON e.month = months.month
       ORDER BY months.month ASC;
     `;
     const trendResult = await db.query(trendQuery);
@@ -95,8 +114,20 @@ router.get('/analytics', async (req, res) => {
       FROM company_expenses
       WHERE date >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'
       GROUP BY category
+      ORDER BY value DESC
     `;
     const breakdownResult = await db.query(breakdownQuery);
+
+    let expensesChartData = breakdownResult.rows.map(row => ({
+      name: row.name,
+      value: parseFloat(row.value)
+    }));
+
+    if (expensesChartData.length > 5) {
+      const top4 = expensesChartData.slice(0, 4);
+      const othersValue = expensesChartData.slice(4).reduce((sum, item) => sum + item.value, 0);
+      expensesChartData = [...top4, { name: 'Others', value: othersValue }];
+    }
 
     res.json({
       trend: trendResult.rows.map(row => ({
@@ -104,10 +135,7 @@ router.get('/analytics', async (req, res) => {
         revenue: parseFloat(row.revenue),
         expenses: parseFloat(row.expenses)
       })),
-      expenses: breakdownResult.rows.map(row => ({
-        name: row.name,
-        value: parseFloat(row.value)
-      }))
+      expenses: expensesChartData
     });
   } catch (err) {
     console.error(err);
