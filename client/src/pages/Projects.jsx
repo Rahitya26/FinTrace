@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search, Briefcase, Users, ChevronDown, Trash2, Calendar, X, Loader2 } from 'lucide-react';
+import { Plus, Search, Briefcase, Users, ChevronDown, Trash2, Calendar, X, Loader2, AlertCircle, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import Modal from '../components/Modal';
 import ProjectForm from '../components/ProjectForm';
+import AssignResourceModal from '../components/AssignResourceModal';
 import { cn, formatCurrency } from '../lib/utils';
 import { getProjects, createProject, getClients, updateProjectStatus, deleteProject, addAllocation } from '../lib/api';
 
@@ -39,7 +40,7 @@ const ProjectSkeleton = () => (
     </div>
 );
 
-const ProjectCard = ({ project, onStatusChange, onDelete }) => {
+const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const navigate = useNavigate();
 
@@ -82,8 +83,15 @@ const ProjectCard = ({ project, onStatusChange, onDelete }) => {
     const revenue = Number(project.revenue_earned) || 1; // Prevent div by zero
     const marginPct = (margin / revenue) * 100;
 
+    const isFixedBid = project.type === 'Fixed Bid' || project.type === 'Fixed Value';
+    const isPastDeadline = isFixedBid && project.deadline && new Date() > new Date(project.deadline) && project.status !== 'Completed';
+    const isHighRisk = isFixedBid && Number(project.employee_costs) > (revenue * 0.8);
+
     let borderClass = 'border-l-4 border-l-slate-200 dark:border-l-slate-700'; // Default
-    if (revenue > 0) {
+    if (project.type === 'T&M') {
+        if (margin < 0) borderClass = 'border-l-4 border-l-rose-500';
+        else if (revenue > 0) borderClass = 'border-l-4 border-l-emerald-500';
+    } else if (revenue > 0) {
         if (marginPct >= 50) borderClass = 'border-l-4 border-l-emerald-500';
         else if (marginPct >= 20) borderClass = 'border-l-4 border-l-amber-500';
         else borderClass = 'border-l-4 border-l-rose-500';
@@ -93,7 +101,7 @@ const ProjectCard = ({ project, onStatusChange, onDelete }) => {
         <div
             onClick={() => setIsExpanded(!isExpanded)}
             className={cn(
-                "bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border-t border-r border-b border-slate-200 dark:border-slate-700 hover:shadow-md transition-all duration-300 flex flex-col cursor-pointer group relative overflow-hidden",
+                "bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border-t border-r border-b border-slate-200 dark:border-slate-700 hover:shadow-md transition-all duration-300 flex flex-col cursor-pointer group relative",
                 borderClass,
                 project.status === 'Completed' ? "opacity-60 grayscale bg-slate-50 dark:bg-slate-900 order-last" : ""
             )}
@@ -109,6 +117,11 @@ const ProjectCard = ({ project, onStatusChange, onDelete }) => {
                 </div>
                 <div className="flex flex-col items-end gap-2">
                     <div className="flex items-center gap-2">
+                        {isHighRisk && (
+                            <div className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded border bg-red-50 text-red-600 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-900/50 flex items-center shadow-sm">
+                                High Risk
+                            </div>
+                        )}
                         <div className={cn("px-2 py-1 text-xs font-semibold rounded-full border", PROCESS_COLORS[project.type])}>
                             {project.type}
                         </div>
@@ -121,6 +134,16 @@ const ProjectCard = ({ project, onStatusChange, onDelete }) => {
                             title="View Team"
                         >
                             <Users className="w-4 h-4" />
+                        </button>
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onAddResource(project);
+                            }}
+                            className="p-1 text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-full transition-colors"
+                            title="Onboard new resource to this project"
+                        >
+                            <UserPlus className="w-4 h-4" />
                         </button>
                         <button
                             onClick={(e) => {
@@ -156,7 +179,7 @@ const ProjectCard = ({ project, onStatusChange, onDelete }) => {
             <div className={cn("flex justify-between items-end transition-all duration-300", isExpanded ? "mt-4 pt-4 border-t border-slate-100 dark:border-slate-700" : "mt-2")}>
                 {!isExpanded && (
                     <div className="text-sm text-slate-500 dark:text-slate-400">
-                        Margin: <span className={Number(project.margin) >= 0 ? "text-green-600 dark:text-green-400 font-medium" : "text-red-500 dark:text-red-400 font-medium"}>
+                        {isFixedBid ? 'Actual Margin' : 'Margin'}: <span className={Number(project.margin) >= 0 ? "text-green-600 dark:text-green-400 font-medium" : "text-red-500 dark:text-red-400 font-medium"}>
                             {formatCurrency(project.margin)}
                         </span>
                     </div>
@@ -187,8 +210,8 @@ const ProjectCard = ({ project, onStatusChange, onDelete }) => {
                             </div>
                         </div>
 
-                        {/* Fixed Bid / Fixed Value Progress Bar */}
-                        {(project.type === 'Fixed Bid' || project.type === 'Fixed Value') && project.deadline && (
+                        {/* Progress Bar & Delay Impact */}
+                        {project.deadline && (
                             <div className="mt-2">
                                 <div className="flex justify-between text-xs mb-1">
                                     <span className={isCritical ? "text-red-600 dark:text-red-400 font-bold" : "text-slate-500 dark:text-slate-400"}>
@@ -206,35 +229,135 @@ const ProjectCard = ({ project, onStatusChange, onDelete }) => {
                                         style={{ width: `${progress}%` }}
                                     />
                                 </div>
+                                {isCritical && project.debug_info?.monthlyBurn > 0 && project.status !== 'Completed' && (
+                                    <div className="mt-3 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/50 rounded-lg p-2.5 flex items-start gap-2.5 text-left">
+                                        <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-500 mt-0.5 shrink-0" />
+                                        <div>
+                                            <p className="text-[10px] uppercase font-bold text-amber-800 dark:text-amber-500 tracking-wider">Delay Impact Warning</p>
+                                            <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5 leading-snug">
+                                                {project.type === 'T&M' ? (
+                                                    <>A +30 day delay will burn an additional <strong>{formatCurrency(project.debug_info.monthlyBurn)}</strong> in active staff salaries, but generate an additional <strong>{formatCurrency(project.debug_info.monthlyRevenue)}</strong> in billed revenue, altering the margin to <strong>{formatCurrency((Number(project.margin) || 0) + (Number(project.debug_info.monthlyRevenue) || 0) - (Number(project.debug_info.monthlyBurn) || 0))}</strong>.</>
+                                                ) : (
+                                                    <>A +30 day delay will burn an additional <strong>{formatCurrency(project.debug_info.monthlyBurn)}</strong> in active staff salaries, reducing margin to <strong>{formatCurrency(Number(project.margin) - project.debug_info.monthlyBurn)}</strong>.</>
+                                                )}
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
 
                     {/* Financials */}
                     <div className="space-y-3">
-                        <div className="flex justify-between text-sm">
-                            <span className="text-slate-500 dark:text-slate-400">Revenue</span>
+                        <div className="flex justify-between text-sm items-center">
+                            <span className="text-slate-500 dark:text-slate-400 flex items-center">
+                                {project.type === 'T&M' ? 'Total Billed to Date' : 'Revenue'}
+                                {project.type === 'T&M' && (() => {
+                                    if (!project.debug_info?.plans?.length) return null;
+                                    return (
+                                        <div className="relative group/tooltip ml-2 flex items-center">
+                                            <span className="text-[9px] uppercase tracking-wider text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 px-1.5 py-0.5 rounded cursor-help font-bold hover:bg-emerald-100 transition-colors">
+                                                Billing
+                                            </span>
+                                            <div className="absolute bottom-full left-0 mb-2 w-max min-w-[240px] max-w-[320px] bg-slate-800 text-white text-xs rounded-lg py-2 px-3 opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl text-left font-medium">
+                                                <div className="mb-1.5 pb-1.5 border-b border-slate-700 text-[10px] text-slate-400 uppercase tracking-wider font-bold">
+                                                    Billing Breakdown
+                                                </div>
+                                                <div className="space-y-2 mb-2">
+                                                    {project.debug_info.plans.map((p, idx) => (
+                                                        <div key={idx} className="flex flex-col gap-0.5">
+                                                            <div className="flex justify-between items-center gap-4">
+                                                                <span className="text-slate-300 font-bold">{p.name || 'Unknown'}</span>
+                                                                <span>{formatCurrency(p.totalPlanRevenue || 0)}</span>
+                                                            </div>
+                                                            <div className="text-slate-500 text-[10px] text-right">
+                                                                (₹{p.hourly_rate || 0}/hr) × 8 hrs/day × {p.workingDays || 0} days
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <div className="flex justify-between items-center pt-1.5 border-t border-slate-700 font-bold text-emerald-400">
+                                                    <span>Total Generated</span>
+                                                    <span>{formatCurrency(project.revenue_earned)}</span>
+                                                </div>
+                                                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+                            </span>
                             <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(project.revenue_earned)}</span>
                         </div>
-                        <div className="flex justify-between text-sm">
-                            <span className="text-slate-500 dark:text-slate-400">
-                                Costs {project.is_calculated_cost && <span title="Calculated from resources" className="text-[10px] text-primary bg-primary/10 px-1 rounded ml-1 cursor-help">Calc.</span>}
+                        <div className="flex justify-between text-sm items-center">
+                            <span className="text-slate-500 dark:text-slate-400 flex items-center">
+                                {isFixedBid ? 'Current Burn' : 'Costs'}
+                                {(() => {
+                                    if (!project.debug_info?.plans?.length) {
+                                        return (
+                                            <div className="relative group/tooltip ml-2 flex items-center">
+                                                <span className="text-[9px] uppercase tracking-wider text-primary bg-primary-50 dark:bg-primary-900/30 px-1.5 py-0.5 rounded cursor-help font-bold hover:bg-primary-100 transition-colors">
+                                                    Staff
+                                                </span>
+                                                <div className="absolute bottom-full left-0 mb-2 w-max max-w-[200px] bg-slate-800 text-white text-xs rounded py-1.5 px-2.5 opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl text-center">
+                                                    No resources assigned.
+                                                    <div className="absolute top-full left-4 border-4 border-transparent border-t-slate-800"></div>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+
+                                    return (
+                                        <div className="relative group/tooltip ml-2 flex items-center">
+                                            <span className="text-[9px] uppercase tracking-wider text-primary bg-primary-50 dark:bg-primary-900/30 px-1.5 py-0.5 rounded cursor-help font-bold hover:bg-primary-100 transition-colors">
+                                                Staff
+                                            </span>
+                                            <div className="absolute bottom-full left-0 mb-2 w-max min-w-[200px] max-w-[300px] bg-slate-800 text-white text-xs rounded-lg py-2 px-3 opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl text-left font-medium">
+                                                <div className="mb-1.5 pb-1.5 border-b border-slate-700 text-[10px] text-slate-400 uppercase tracking-wider font-bold">
+                                                    {project.type === 'T&M' ? 'Contractor Payout (70% of Billing)' : 'Staff Breakdown'}
+                                                </div>
+                                                <div className="space-y-1 mb-2">
+                                                    {project.debug_info.plans.map((p, idx) => (
+                                                        <div key={idx} className="flex justify-between items-center gap-4">
+                                                            <span className="text-slate-300">{p.name || 'Unknown'}</span>
+                                                            <span>{formatCurrency(project.type === 'T&M' ? p.totalPlanCost : (p.calc_salary * p.calc_alloc))}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <div className="flex justify-between items-center pt-1.5 border-t border-slate-700 font-bold text-emerald-400">
+                                                    <span>Total {project.type === 'T&M' ? 'to Date' : '/ month'}</span>
+                                                    <span>{isFixedBid || project.debug_info.type === 'Fixed' ? formatCurrency(project.debug_info.monthlyBurn) : formatCurrency(project.employee_costs)}</span>
+                                                </div>
+                                                <div className="absolute top-full left-4 border-4 border-transparent border-t-slate-800"></div>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
                             </span>
-                            <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(project.employee_costs)}</span>
+                            <span className={cn("font-medium", isPastDeadline ? "text-red-600 dark:text-red-400 font-bold" : "text-slate-900 dark:text-white")}>
+                                {formatCurrency(project.employee_costs)}
+                            </span>
                         </div>
                         <div className="flex justify-between text-base font-bold pt-2 border-t border-slate-50 dark:border-slate-700">
-                            <span className="text-slate-700 dark:text-slate-300">Margin</span>
+                            <span className="text-slate-700 dark:text-slate-300">{isFixedBid ? 'Actual Margin' : 'Margin'}</span>
                             <div className="flex flex-col items-end">
                                 {Number(project.revenue_earned) > 0 && (() => {
                                     const margin = Number(project.margin);
                                     const revenue = Number(project.revenue_earned);
                                     const marginPct = (margin / revenue) * 100;
 
-                                    if (marginPct < 20) {
-                                        return <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium mb-1">Low Margin</span>;
-                                    }
-                                    if (marginPct > 50) {
-                                        return <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium mb-1">High Profit</span>;
+                                    if (project.type === 'T&M') {
+                                        if (margin < 0) {
+                                            return <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium mb-1">At Risk</span>;
+                                        }
+                                        return <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium mb-1">On Track</span>;
+                                    } else {
+                                        if (marginPct < 20) {
+                                            return <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium mb-1">Low Margin</span>;
+                                        }
+                                        if (marginPct > 50) {
+                                            return <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium mb-1">High Profit</span>;
+                                        }
                                     }
                                     return null;
                                 })()}
@@ -254,6 +377,7 @@ const Projects = () => {
     const [projects, setProjects] = useState([]);
     const [clients, setClients] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [selectedProjectForResource, setSelectedProjectForResource] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [searchParams, setSearchParams] = useSearchParams();
     const navigate = useNavigate();
@@ -352,17 +476,30 @@ const Projects = () => {
             // Handle Resources if present
             if (projectData.resources && projectData.resources.length > 0) {
                 try {
-                    await Promise.all(projectData.resources.map(resource =>
-                        addAllocation({
-                            projectId: response.data.id,
-                            employeeId: resource.employeeId,
-                            allocationPercentage: resource.allocation,
-                            startDate: projectData.startDate // Default to project start
-                        })
-                    ));
+                    await Promise.all(projectData.resources.map(resource => {
+                        // If it has an ID, it's an existing mapped resource getting updated/offboarded
+                        if (resource.id && resource.endDate) {
+                            return offboardAllocation(resource.id, resource.endDate);
+                        } else if (!resource.id) {
+                            // It's a brand new resource
+                            return addAllocation({
+                                projectId: response.data.id || projectData.id,
+                                employeeId: resource.employeeId,
+                                allocationPercentage: resource.allocation,
+                                startDate: resource.startDate || projectData.startDate
+                            }).then(newAllocRes => {
+                                // If they added and then immediately off-boarded a new resource before saving
+                                if (resource.endDate && newAllocRes.data && newAllocRes.data.id) {
+                                    return offboardAllocation(newAllocRes.data.id, resource.endDate);
+                                }
+                                return newAllocRes;
+                            });
+                        }
+                        return Promise.resolve(); // No change needed
+                    }));
                 } catch (resErr) {
                     console.error("Failed to save resources", resErr);
-                    toast.error("Project created but failed to save resources");
+                    toast.error("Project created/updated but failed to save resources");
                 }
             }
 
@@ -690,6 +827,7 @@ const Projects = () => {
                                     project={project}
                                     onStatusChange={handleStatusChange}
                                     onDelete={handleDeleteProject}
+                                    onAddResource={(p) => setSelectedProjectForResource(p)}
                                 />
                             ))}
                         </div>
@@ -726,8 +864,8 @@ const Projects = () => {
             {
                 isModalOpen && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-                        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-700">
+                        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl w-full max-w-6xl max-h-[95vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-700 shrink-0">
                                 <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Add New Project</h3>
                                 <button
                                     onClick={() => setIsModalOpen(false)}
@@ -737,12 +875,13 @@ const Projects = () => {
                                     <Plus className="w-5 h-5 transform rotate-45" />
                                 </button>
                             </div>
-                            <div className="p-6">
+                            <div className="flex-1 overflow-hidden relative">
                                 <ProjectForm
                                     clients={clients}
                                     onSubmit={handleAddProject}
                                     onCancel={() => setIsModalOpen(false)}
                                     isLoading={isLoading}
+                                    initialData={null}
                                 />
                             </div>
                         </div>
@@ -782,6 +921,17 @@ const Projects = () => {
                     </div>
                 </div>
             </Modal>
+
+            <AssignResourceModal
+                isOpen={!!selectedProjectForResource}
+                project={selectedProjectForResource}
+                onClose={() => setSelectedProjectForResource(null)}
+                onAddSuccess={() => {
+                    setSelectedProjectForResource(null);
+                    fetchProjects();
+                    toast.success('Resource assigned to project successfully');
+                }}
+            />
         </div >
     );
 };

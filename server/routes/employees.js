@@ -54,8 +54,9 @@ router.get('/', async (req, res) => {
         const totalItems = parseInt(countResult.rows[0].count);
         const totalPages = Math.ceil(totalItems / limit);
 
+        const selectFields = projectId ? 'DISTINCT e.*, prp.end_date as offboarded_date' : 'DISTINCT e.*';
         const dataQuery = `
-            SELECT DISTINCT e.* FROM employees e
+            SELECT ${selectFields} FROM employees e
             ${joinClause}
             ${whereString} 
             ORDER BY e.name ASC 
@@ -197,6 +198,24 @@ router.delete('/allocations/:id', async (req, res) => {
             return res.status(404).json({ error: 'Allocation not found' });
         }
         res.json({ message: 'Allocation removed successfully' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// PATCH /api/employees/allocations/:id/offboard
+router.patch('/allocations/:id/offboard', async (req, res) => {
+    try {
+        const { endDate } = req.body;
+        const result = await db.query(
+            'UPDATE project_resource_plans SET end_date = $1 WHERE id = $2 RETURNING *',
+            [endDate || new Date(), req.params.id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Allocation not found' });
+        }
+        res.json({ message: 'Resource off-boarded successfully', data: result.rows[0] });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Internal server error' });

@@ -12,6 +12,7 @@ export const createProject = (data) => api.post('/projects', data);
 export const updateProjectStatus = (id, status) => api.put(`/projects/${id}/status`, { status });
 export const deleteProject = (id) => api.delete(`/projects/${id}`);
 export const getProjectResources = (projectId) => api.get(`/projects/${projectId}/resources`);
+export const offboardProjectResource = (projectId, employeeId, endDate) => api.patch(`/projects/${projectId}/resources/${employeeId}/offboard`, { endDate });
 
 export const getExpenses = (params) => api.get('/expenses', { params });
 export const createExpense = (data) => api.post('/expenses', data);
@@ -29,5 +30,6 @@ export const deleteEmployee = (id) => api.delete(`/employees/${id}`);
 export const getAllocations = (projectId) => api.get(`/employees/allocations/${projectId}`);
 export const addAllocation = (data) => api.post('/employees/allocations', data);
 export const removeAllocation = (id) => api.delete(`/employees/allocations/${id}`);
+export const offboardAllocation = (id, endDate) => api.patch(`/employees/allocations/${id}/offboard`, { endDate });
 
 export default api;
