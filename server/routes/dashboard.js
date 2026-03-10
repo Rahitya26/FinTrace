@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const { calculateProjectFinancials } = require('../utils/projectCalculation');
 
 // GET /api/dashboard/summary
 router.get('/summary', async (req, res) => {
@@ -18,43 +19,101 @@ router.get('/summary', async (req, res) => {
   }
 
   try {
-    // 1. Total Revenue & Project Costs
-    const projectsQuery = `
-          SELECT 
-            SUM(revenue_earned) as total_revenue,
-            SUM(employee_costs) as total_project_costs
-          FROM projects
-          ${projectsWhere}
-        `;
+    // Fetch all applicable projects
+    const projectsQuery = `SELECT * FROM projects ${projectsWhere}`;
     const projectsResult = await db.query(projectsQuery, queryParams);
-    const { total_revenue, total_project_costs } = projectsResult.rows[0] || {}; // Handle empty result
+
+    // Fetch related resource plans including employee specifics
+    const plansQuery = `
+        SELECT prp.*, e.monthly_salary, e.hourly_rate, e.name 
+        FROM project_resource_plans prp
+        JOIN employees e ON prp.employee_id = e.id
+    `;
+    const plansResult = await db.query(plansQuery);
+
+    // 3. Fetch Unapproved Timesheet Logs for T&M Projections
+    const unapprovedLogsQuery = `
+        SELECT t.project_id, t.employee_id, t.hours_worked, e.usd_hourly_rate, e.hourly_rate as inr_hourly_rate
+        FROM timesheet_logs t
+        JOIN employees e ON t.employee_id = e.id
+        WHERE t.approval_id IS NULL
+    `;
+    const unapprovedLogsResult = await db.query(unapprovedLogsQuery);
+    const unapprovedLogs = unapprovedLogsResult.rows;
+
+    // 4. Fetch Approved Timesheet Aggregates for Dashboard
+    const approvedLogsQuery = `
+        SELECT 
+            t.project_id, 
+            t.employee_id, 
+            SUM(t.hours_worked) as total_hours,
+            SUM(t.hours_worked * e.hourly_rate) as total_inr_cost,
+            SUM(t.hours_worked * e.usd_hourly_rate * ta.usd_to_inr_rate) as total_inr_revenue
+        FROM timesheet_logs t
+        JOIN employees e ON t.employee_id = e.id
+        JOIN timesheet_approvals ta ON t.approval_id = ta.id
+        GROUP BY t.project_id, t.employee_id
+    `;
+    const approvedLogsResult = await db.query(approvedLogsQuery);
+    const approvedLogs = approvedLogsResult.rows;
+
+    let totalRevenue = 0;
+    let totalProjectCosts = 0;
+    const processTypeBreakdownMap = {
+      'T&M': { rev: 0, cost: 0, margin: 0, count: 0 },
+      'Fixed Bid': { rev: 0, cost: 0, margin: 0, count: 0 },
+      'Fixed Value': { rev: 0, cost: 0, margin: 0, count: 0 }
+    };
+
+    const employeeCostMap = {};
+
+    projectsResult.rows.forEach(project => {
+      const calculated = calculateProjectFinancials(project, plansResult.rows, unapprovedLogs, approvedLogs);
+      const rev = Number(calculated.revenue_earned) || 0;
+      const cost = Number(calculated.employee_costs) || 0;
+      const margin = rev - cost;
+
+      totalRevenue += rev;
+      totalProjectCosts += cost;
+
+      const type = project.type || 'Fixed Bid';
+      if (!processTypeBreakdownMap[type]) {
+        processTypeBreakdownMap[type] = { rev: 0, cost: 0, margin: 0, count: 0 };
+      }
+      processTypeBreakdownMap[type].count += 1;
+      processTypeBreakdownMap[type].rev += rev;
+      processTypeBreakdownMap[type].cost += cost;
+      processTypeBreakdownMap[type].margin += margin;
+
+      // Track individual employee costs from enhanced plans (Calculated monthly burn or approved cost)
+      if (calculated.debug_info?.plans) {
+        calculated.debug_info.plans.forEach(plan => {
+          if (!employeeCostMap[plan.employee_id]) {
+            employeeCostMap[plan.employee_id] = { id: plan.employee_id, name: plan.name, role: plan.role, totalCost: 0 };
+          }
+          employeeCostMap[plan.employee_id].totalCost += plan.totalPlanCost || 0;
+        });
+      }
+    });
+
+    const processTypeBreakdown = Object.keys(processTypeBreakdownMap).map(type => ({
+      type,
+      ...processTypeBreakdownMap[type]
+    }));
+
+    const employeeCostList = Object.values(employeeCostMap).sort((a, b) => b.totalCost - a.totalCost);
 
     // 2. Total Company Expenses
     const expensesQuery = `SELECT SUM(amount) as total_expenses FROM company_expenses ${expensesWhere}`;
     const expensesResult = await db.query(expensesQuery, queryParams);
     const { total_expenses } = expensesResult.rows[0] || {};
 
-    // 3. Breakdown by Process Type
-    const breakdownQuery = `
-          SELECT 
-            type, 
-            COUNT(*) as count, 
-            SUM(revenue_earned) - SUM(employee_costs) as margin
-          FROM projects
-          ${projectsWhere}
-          GROUP BY type
-        `;
-    const breakdownResult = await db.query(breakdownQuery, queryParams);
-
     res.json({
-      totalRevenue: parseFloat(total_revenue || 0),
-      totalProjectCosts: parseFloat(total_project_costs || 0),
+      totalRevenue: parseFloat(totalRevenue || 0),
+      totalProjectCosts: parseFloat(totalProjectCosts || 0),
       totalCompanyExpenses: parseFloat(total_expenses || 0),
-      processTypeBreakdown: breakdownResult.rows.map(row => ({
-        type: row.type,
-        count: parseInt(row.count),
-        margin: parseFloat(row.margin || 0)
-      }))
+      processTypeBreakdown,
+      employeeCostList
     });
   } catch (err) {
     console.error(err);

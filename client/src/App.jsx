@@ -8,6 +8,9 @@ import Projects from './pages/Projects';
 import Employees from './pages/Employees';
 import Expenses from './pages/Expenses';
 
+import Timesheets from './pages/Timesheets';
+import Approvals from './pages/Approvals';
+
 function App() {
   return (
     <Router>
@@ -18,6 +21,8 @@ function App() {
           <Route path="/clients" element={<Clients />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/employees" element={<Employees />} />
+          <Route path="/timesheets" element={<Timesheets />} />
+          <Route path="/approvals" element={<Approvals />} />
           <Route path="/expenses" element={<Expenses />} />
         </Routes>
       </Layout>

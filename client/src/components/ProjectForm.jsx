@@ -18,7 +18,8 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
         type: 'T&M',
         revenue: '',
         startDate: new Date().toISOString().split('T')[0],
-        deadline: ''
+        deadline: '',
+        usdRate: ''
     });
 
     const [displayValues, setDisplayValues] = useState({
@@ -29,8 +30,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
     const [resources, setResources] = useState([]); // { employeeId, allocation, name, salary }
     const [newResource, setNewResource] = useState({
         employeeId: '',
-        allocation: 100,
-        startDate: new Date().toISOString().split('T')[0]
+        allocation: 100
     });
     const [empSearch, setEmpSearch] = useState('');
     const [selectedRole, setSelectedRole] = useState('');
@@ -81,19 +81,9 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                 const durationMonths = diffTime / (1000 * 60 * 60 * 24 * 30.44);
 
                 if (formData.type === 'T&M') {
-                    const hourlyRate = emp ? Number(emp.hourly_rate) : 0;
-
-                    let d = new Date(start.getTime());
-                    let workingDays = 0;
-                    while (d <= calculationEndDate) {
-                        const day = d.getDay();
-                        if (day !== 0 && day !== 6) workingDays++;
-                        d.setDate(d.getDate() + 1);
-                    }
-
-                    const resourceRevenue = workingDays * 8 * hourlyRate;
-                    totalRevenue += resourceRevenue;
-                    totalCost += resourceRevenue * 0.70; // Contractor Payout
+                    // T&M costs and revenues are 0 until timesheets are approved.
+                    totalRevenue += 0;
+                    totalCost += 0;
                 } else {
                     totalCost += (monthlyBurn * durationMonths);
                 }
@@ -128,11 +118,6 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
     const addResource = () => {
         if (!newResource.employeeId) return;
 
-        if (new Date(newResource.startDate) < new Date(formData.startDate)) {
-            toast.error("Resource start date cannot be before project start date");
-            return;
-        }
-
         const emp = employees.find(e => e.id === Number(newResource.employeeId));
         if (!emp) return;
 
@@ -149,13 +134,23 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
         }]);
         setNewResource({
             employeeId: '',
-            allocation: 100,
-            startDate: new Date().toISOString().split('T')[0]
+            allocation: 100
         });
     };
 
-    const handleRemoveClick = (index) => {
-        setResources(resources.filter((_, i) => i !== index));
+    const handleOffboardClick = (index) => {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const dateInput = window.prompt("Enter End Date (YYYY-MM-DD) to Offboard:", todayStr);
+        if (dateInput !== null) {
+            const newDate = new Date(dateInput);
+            if (!isNaN(newDate.getTime())) {
+                const newResources = [...resources];
+                newResources[index].endDate = newDate.toISOString().split('T')[0];
+                setResources(newResources);
+            } else {
+                toast.error("Invalid date format. Please use YYYY-MM-DD.");
+            }
+        }
     };
 
     const handleSubmit = (e) => {
@@ -406,10 +401,6 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                         <option value="">Select Employee...</option>
                                         {employees
                                             .filter(e => !resources.some(r => Number(r.employeeId) === e.id)) // Filter out already assigned
-                                            .filter(e => {
-                                                if (formData.type === 'T&M') return e.specialization === 'T&M';
-                                                return e.specialization !== 'T&M';
-                                            })
                                             .filter(e => selectedRole === '' || e.role === selectedRole)
                                             .filter(e => e.name.toLowerCase().includes(empSearch.toLowerCase()) || e.role.toLowerCase().includes(empSearch.toLowerCase()))
                                             .map(e => (
@@ -420,17 +411,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                     </select>
                                 </div>
                             </div>
-                            <div className={`w-full ${formData.type === 'T&M' ? 'sm:w-[45%]' : 'sm:w-[35%]'} pl-0 sm:pl-2 border-l-0 sm:border-l border-slate-200 dark:border-slate-700`}>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                                    Assignment Start Date
-                                </label>
-                                <input
-                                    type="date"
-                                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-800 text-slate-900 dark:text-white dark:[color-scheme:dark]"
-                                    value={newResource.startDate}
-                                    onChange={(e) => setNewResource({ ...newResource, startDate: e.target.value })}
-                                />
-                            </div>
+
                             {formData.type !== 'T&M' && (
                                 <div className="w-full sm:w-[15%]">
                                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -498,11 +479,11 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                                                 type="button"
                                                                 onClick={(e) => {
                                                                     e.preventDefault();
-                                                                    handleRemoveClick(i);
+                                                                    handleOffboardClick(i);
                                                                 }}
-                                                                className="text-slate-400 hover:text-red-500 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+                                                                className="text-amber-600 hover:text-amber-700 dark:text-amber-500 dark:hover:text-amber-400 font-medium text-xs px-2 py-1 bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/20 dark:hover:bg-amber-900/40 rounded transition-colors"
                                                             >
-                                                                <Trash2 className="w-4 h-4" />
+                                                                Offboard
                                                             </button>
                                                         ) : (
                                                             <span className="text-xs font-bold text-red-500 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded">

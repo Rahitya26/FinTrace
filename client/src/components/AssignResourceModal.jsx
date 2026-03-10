@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { X, Loader2, AlertCircle, UserPlus } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Loader2, AlertCircle, UserPlus, Search, ChevronDown } from 'lucide-react';
 import api from '../lib/api';
-import { formatCurrency } from '../lib/utils';
+import { formatCurrency, cn } from '../lib/utils';
 
 const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
     const [employees, setEmployees] = useState([]);
@@ -13,15 +13,33 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
     const [allocation, setAllocation] = useState(project?.type === 'T&M' ? 100 : 100);
     const [error, setError] = useState(null);
 
+    // Dropdown state
+    const [searchTerm, setSearchTerm] = useState('');
+    const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+    const dropdownRef = useRef(null);
+
     useEffect(() => {
         if (isOpen && project) {
             fetchEmployees();
             setSelectedEmployeeId('');
+            setSearchTerm('');
+            setIsDropdownOpen(false);
             setStartDate(new Date().toISOString().split('T')[0]);
             setAllocation(project.type === 'T&M' ? 100 : 100);
             setError(null);
         }
     }, [isOpen, project]);
+
+    // Outside click handler
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setIsDropdownOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
 
     const fetchEmployees = async () => {
         try {
@@ -66,6 +84,32 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
 
     const selectedEmp = employees.find(e => e.id === Number(selectedEmployeeId));
 
+    const filteredEmployees = employees.filter(emp =>
+        emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        emp.role.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    const toggleDropdown = () => {
+        if (isLoading) return;
+        setIsDropdownOpen(!isDropdownOpen);
+        if (!isDropdownOpen) setSearchTerm('');
+    };
+
+    const selectEmployee = (emp) => {
+        const isAssigned = project.debug_info?.plans?.some(p => Number(p.employee_id) === Number(emp.id) && !p.offboarded);
+        if (isAssigned) return;
+
+        setSelectedEmployeeId(emp.id);
+        setIsDropdownOpen(false);
+        setSearchTerm('');
+    };
+
+    const getSelectedEmployeeName = () => {
+        if (!selectedEmployeeId) return '';
+        const emp = employees.find(e => Number(e.id) === Number(selectedEmployeeId));
+        return emp ? `${emp.name} - ${emp.role}` : '';
+    };
+
     return (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
             <div className="bg-white dark:bg-slate-900 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200 dark:border-slate-800">
@@ -95,27 +139,90 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
                             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                                 Select Employee
                             </label>
-                            {isLoading ? (
-                                <div className="h-10 border border-slate-200 dark:border-slate-700 rounded-lg flex items-center justify-center bg-slate-50 dark:bg-slate-800">
-                                    <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
-                                </div>
-                            ) : (
-                                <select
-                                    value={selectedEmployeeId}
-                                    onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                                    required
+                            <div className="relative" ref={dropdownRef}>
+                                <div
+                                    onClick={toggleDropdown}
+                                    className={cn(
+                                        "w-full px-3 py-2 border rounded-lg flex items-center justify-between cursor-pointer transition-all focus:ring-2 focus:ring-primary/50 outline-none",
+                                        isLoading
+                                            ? "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400 cursor-not-allowed"
+                                            : "bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-900 dark:text-white",
+                                        isDropdownOpen && "border-primary ring-2 ring-primary/20"
+                                    )}
+                                    tabIndex={0}
                                 >
-                                    <option value="">-- Choose Employee --</option>
-                                    {employees
-                                        .filter(emp => emp.specialization === project?.type)
-                                        .map(emp => (
-                                            <option key={emp.id} value={emp.id} disabled={project.debug_info?.plans?.some(p => p.name === emp.name && !p.offboarded)}>
-                                                {emp.name} - {emp.role} {project.debug_info?.plans?.some(p => p.name === emp.name && !p.offboarded) ? '(Already Assigned)' : ''}
-                                            </option>
-                                        ))}
-                                </select>
-                            )}
+                                    <span className="truncate">
+                                        {getSelectedEmployeeName() || "-- Choose Employee --"}
+                                    </span>
+                                    <div className="flex items-center gap-2">
+                                        {selectedEmployeeId && (
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setSelectedEmployeeId('');
+                                                }}
+                                                className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors"
+                                            >
+                                                <X className="w-3.5 h-3.5 text-slate-400 hover:text-red-500" />
+                                            </button>
+                                        )}
+                                        {isLoading ? <Loader2 className="w-4 h-4 animate-spin text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                                    </div>
+                                </div>
+
+                                {isDropdownOpen && (
+                                    <div className="absolute z-[60] w-full mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl overflow-hidden">
+                                        <div className="p-2 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800 flex items-center">
+                                            <Search className="w-4 h-4 text-slate-400 ml-2 mr-2 shrink-0" />
+                                            <input
+                                                type="text"
+                                                autoFocus
+                                                placeholder="Type to search..."
+                                                className="w-full bg-transparent border-none focus:outline-none text-sm text-slate-900 dark:text-white placeholder:text-slate-400 py-1"
+                                                value={searchTerm}
+                                                onChange={(e) => setSearchTerm(e.target.value)}
+                                                onClick={(e) => e.stopPropagation()}
+                                            />
+                                        </div>
+                                        <ul className="max-h-60 overflow-y-auto py-1">
+                                            {filteredEmployees.length > 0 ? (
+                                                filteredEmployees.map(emp => {
+                                                    const isAssigned = project.debug_info?.plans?.some(p => Number(p.employee_id) === Number(emp.id) && !p.offboarded);
+                                                    return (
+                                                        <li
+                                                            key={emp.id}
+                                                            className={cn(
+                                                                "px-4 py-2 text-sm cursor-pointer transition-colors",
+                                                                isAssigned
+                                                                    ? "opacity-50 cursor-not-allowed bg-slate-50 dark:bg-slate-800/50 italic text-slate-400"
+                                                                    : Number(emp.id) === Number(selectedEmployeeId)
+                                                                        ? "bg-primary text-white font-medium"
+                                                                        : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700"
+                                                            )}
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                selectEmployee(emp);
+                                                            }}
+                                                        >
+                                                            <div className="flex flex-col">
+                                                                <span className="font-semibold">{emp.name}</span>
+                                                                <span className="text-[11px] opacity-80 whitespace-nowrap">
+                                                                    {emp.role} {isAssigned && '• Already Assigned'}
+                                                                </span>
+                                                            </div>
+                                                        </li>
+                                                    );
+                                                })
+                                            ) : (
+                                                <li className="px-4 py-3 text-sm text-slate-500 text-center italic">
+                                                    No employees found matching "{searchTerm}"
+                                                </li>
+                                            )}
+                                        </ul>
+                                    </div>
+                                )}
+                            </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">

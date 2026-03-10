@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search, Users, Trash2, Edit2, X, Briefcase, IndianRupee, List, LayoutGrid } from 'lucide-react';
+import { Plus, Search, Users, Trash2, Edit2, X, Briefcase, IndianRupee, DollarSign, List, LayoutGrid } from 'lucide-react';
 import { toast } from 'sonner';
 import Modal from '../components/Modal';
 import { cn, formatCurrency } from '../lib/utils';
@@ -23,11 +23,13 @@ const Employees = () => {
         monthly_salary: '',
         status: 'Active',
         specialization: 'Fixed Bid',
-        hourly_rate: ''
+        hourly_rate: '',
+        usd_hourly_rate: ''
     });
     const [displayValues, setDisplayValues] = useState({
         monthly_salary: '',
-        hourly_rate: ''
+        hourly_rate: '',
+        usd_hourly_rate: ''
     });
 
     const handleCurrencyChange = (field, value) => {
@@ -90,8 +92,8 @@ const Employees = () => {
     };
 
     const openAddModal = () => {
-        setFormData({ name: '', role: '', monthly_salary: '', status: 'Active', specialization: 'Fixed Bid', hourly_rate: '' });
-        setDisplayValues({ monthly_salary: '', hourly_rate: '' });
+        setFormData({ name: '', role: '', monthly_salary: '', status: 'Active', specialization: 'Fixed Bid', hourly_rate: '', usd_hourly_rate: '' });
+        setDisplayValues({ monthly_salary: '', hourly_rate: '', usd_hourly_rate: '' });
         setIsEditing(false);
         setCurrentEmployee(null);
         setIsModalOpen(true);
@@ -104,11 +106,13 @@ const Employees = () => {
             monthly_salary: employee.monthly_salary,
             status: employee.status,
             specialization: employee.specialization || 'Fixed Bid',
-            hourly_rate: employee.hourly_rate
+            hourly_rate: employee.hourly_rate,
+            usd_hourly_rate: employee.usd_hourly_rate
         });
         setDisplayValues({
             monthly_salary: employee.monthly_salary ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(employee.monthly_salary) : '',
-            hourly_rate: employee.hourly_rate ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(employee.hourly_rate) : ''
+            hourly_rate: employee.hourly_rate ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(employee.hourly_rate) : '',
+            usd_hourly_rate: employee.usd_hourly_rate ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(employee.usd_hourly_rate) : ''
         });
         setIsEditing(true);
         setCurrentEmployee(employee);
@@ -123,7 +127,8 @@ const Employees = () => {
             const submissionData = {
                 ...formData,
                 monthly_salary: formData.monthly_salary || 0,
-                hourly_rate: formData.hourly_rate || 0
+                hourly_rate: formData.hourly_rate || 0,
+                usd_hourly_rate: formData.usd_hourly_rate || 0
             };
 
             if (isEditing) {
@@ -183,13 +188,13 @@ const Employees = () => {
                 <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-700 pb-4">
                     <div>
                         <h2 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                            {specializationFilter} View
+                            {specializationFilter} Process View
                             <span className="px-2 py-1 bg-primary/10 text-primary text-xs rounded-full border border-primary/20">
-                                Process
+                                Skill Area
                             </span>
                         </h2>
                         <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
-                            Manage employees and projects for {specializationFilter}
+                            Manage employees and projects for the {specializationFilter} skill area
                         </p>
                     </div>
 
@@ -289,7 +294,7 @@ const Employees = () => {
                                     {/* Info */}
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center justify-between">
-                                            <h3 className={cn("text-sm font-medium truncate pr-6", employee.offboarded_date ? "text-slate-400 line-through" : "text-slate-900 dark:text-white")}>
+                                            <h3 className={cn("text-sm font-medium truncate pr-16", employee.offboarded_date ? "text-slate-400 line-through" : "text-slate-900 dark:text-white")}>
                                                 {employee.name}
                                             </h3>
                                         </div>
@@ -306,9 +311,9 @@ const Employees = () => {
                                                 )} title={employee.status} />
                                             )}
                                             {/* Specialization / Rate Display */}
-                                            <div className="flex flex-col items-end">
+                                            <div className="flex flex-col items-start">
                                                 <span className="text-[10px] text-slate-400 uppercase tracking-tighter">
-                                                    {employee.specialization === 'T&M' ? 'Rate/Hr' : 'Salary'}
+                                                    {employee.specialization === 'T&M' ? 'Rate/Hr' : 'Base Salary'}
                                                 </span>
                                                 <span className="text-xs font-mono text-slate-600 dark:text-slate-300">
                                                     {employee.specialization === 'T&M'
@@ -412,7 +417,7 @@ const Employees = () => {
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
                                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                                            Specialization
+                                            Primary Skill
                                         </label>
                                         <div className="relative">
                                             <Briefcase className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
@@ -446,40 +451,56 @@ const Employees = () => {
                                         </div>
                                     </div>
                                 </div>
-
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div>
-                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                                                Monthly Salary
-                                            </label>
-                                            <div className="relative">
-                                                <IndianRupee className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                                                <input
-                                                    type="text"
-                                                    name="monthly_salary"
-                                                    className="pl-9 w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
-                                                    placeholder="Internal cost (Fixed Bid)"
-                                                    value={displayValues.monthly_salary}
-                                                    onChange={(e) => handleCurrencyChange('monthly_salary', e.target.value)}
-                                                />
-                                            </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                            Monthly Salary (INR) <span className="text-red-500">*</span>
+                                        </label>
+                                        <div className="relative">
+                                            <IndianRupee className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                                            <input
+                                                type="text"
+                                                name="monthly_salary"
+                                                className="pl-9 w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                                                placeholder="Internal cost (Fixed Bid)"
+                                                value={displayValues.monthly_salary}
+                                                onChange={(e) => handleCurrencyChange('monthly_salary', e.target.value)}
+                                                required={true}
+                                            />
                                         </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                                                Hourly Rate
-                                            </label>
-                                            <div className="relative">
-                                                <IndianRupee className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                                                <input
-                                                    type="text"
-                                                    name="hourly_rate"
-                                                    className="pl-9 w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
-                                                    placeholder="Client billing rate (T&M)"
-                                                    value={displayValues.hourly_rate}
-                                                    onChange={(e) => handleCurrencyChange('hourly_rate', e.target.value)}
-                                                />
-                                            </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                            Hourly Rate (INR) <span className="text-red-500">*</span>
+                                        </label>
+                                        <div className="relative">
+                                            <IndianRupee className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                                            <input
+                                                type="text"
+                                                name="hourly_rate"
+                                                className="pl-9 w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                                                placeholder="Internal billing rate"
+                                                value={displayValues.hourly_rate}
+                                                onChange={(e) => handleCurrencyChange('hourly_rate', e.target.value)}
+                                                required={true}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                            USD Hourly Rate <span className="text-red-500">*</span>
+                                        </label>
+                                        <div className="relative">
+                                            <DollarSign className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                                            <input
+                                                type="text"
+                                                name="usd_hourly_rate"
+                                                className="pl-9 w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                                                placeholder="Client billing rate (USD)"
+                                                value={displayValues.usd_hourly_rate}
+                                                onChange={(e) => handleCurrencyChange('usd_hourly_rate', e.target.value)}
+                                                required={true}
+                                            />
                                         </div>
                                     </div>
                                     <div>

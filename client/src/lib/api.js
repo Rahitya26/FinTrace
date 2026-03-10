@@ -32,4 +32,10 @@ export const addAllocation = (data) => api.post('/employees/allocations', data);
 export const removeAllocation = (id) => api.delete(`/employees/allocations/${id}`);
 export const offboardAllocation = (id, endDate) => api.patch(`/employees/allocations/${id}/offboard`, { endDate });
 
+export const getTimesheets = (params) => api.get('/timesheets', { params });
+export const logTimesheet = (data) => api.post('/timesheets/log', data);
+export const getApprovals = () => api.get('/timesheets/approvals');
+export const approveTimesheets = (data) => api.post('/timesheets/approve', data);
+export const getClientResources = (clientId) => api.get(`/timesheets/client-resources/${clientId}`);
+
 export default api;

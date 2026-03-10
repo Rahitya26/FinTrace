@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, Briefcase, Receipt, Settings, Menu, X, Sun, Moon } from 'lucide-react';
+import { LayoutDashboard, Users, Briefcase, Receipt, Settings, Menu, X, Sun, Moon, Clock, CheckSquare } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useTheme } from '../hooks/useTheme';
 
@@ -14,6 +14,8 @@ const Layout = ({ children }) => {
         { label: 'Clients', path: '/clients', icon: Users },
         { label: 'Projects', path: '/projects', icon: Briefcase },
         { label: 'Employees', path: '/employees', icon: Users },
+        { label: 'Timesheets', path: '/timesheets', icon: Clock },
+        { label: 'Approvals', path: '/approvals', icon: CheckSquare },
         { label: 'Expenses', path: '/expenses', icon: Receipt },
     ];
 

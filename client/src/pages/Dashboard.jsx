@@ -34,6 +34,7 @@ const Dashboard = () => {
     });
     const [activePreset, setActivePreset] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [isModalOpen, setIsModalOpen] = useState(false);
     const navigate = useNavigate();
 
     // Theme colors
@@ -197,15 +198,21 @@ const Dashboard = () => {
                     <p className="text-sm text-slate-400 mt-2">Across all active projects</p>
                 </div>
 
-                <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+                <div
+                    onClick={() => setIsModalOpen(true)}
+                    className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 cursor-pointer hover:border-primary/50 hover:shadow-md transition-all group"
+                >
                     <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Project Margins</h3>
-                        <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg">
-                            <TrendingUp className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                        <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400 group-hover:text-primary transition-colors">Staff Costs</h3>
+                        <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg group-hover:bg-primary group-hover:text-white transition-all">
+                            <TrendingUp className="w-5 h-5 text-indigo-600 dark:text-indigo-400 group-hover:text-white" />
                         </div>
                     </div>
-                    <p className="text-3xl font-bold text-slate-900 dark:text-white">{formatCurrency(totalMargin)}</p>
-                    <p className="text-sm text-slate-400 mt-2">Before company overhead</p>
+                    <p className="text-3xl font-bold text-slate-900 dark:text-white">{formatCurrency(stats.totalProjectCosts)}</p>
+                    <p className="text-sm text-slate-400 mt-2 flex items-center gap-1">
+                        Click for breakdown
+                        <Activity className="w-3 h-3" />
+                    </p>
                 </div>
 
                 <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
@@ -333,6 +340,108 @@ const Dashboard = () => {
                     </div>
                 </div>
             </div>
+
+            {/* Staff Costs Modal */}
+            {isModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+                        {/* Header */}
+                        <div className="p-6 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50">
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Staff Costs Breakdown</h2>
+                                <p className="text-sm text-slate-500 dark:text-slate-400">Comprehensive view of resource consumption</p>
+                            </div>
+                            <button
+                                onClick={() => setIsModalOpen(false)}
+                                className="p-2 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-full transition-colors"
+                            >
+                                <X className="w-5 h-5 text-slate-500" />
+                            </button>
+                        </div>
+
+                        {/* Content */}
+                        <div className="p-6 overflow-y-auto space-y-8 custom-scrollbar">
+                            {/* Process Breakdown */}
+                            <section>
+                                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
+                                    <PieChart className="w-4 h-4 mr-2" /> Process Type Analysis
+                                </h3>
+                                <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                                    <table className="w-full text-sm text-left">
+                                        <thead>
+                                            <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-100/50 dark:bg-slate-800">
+                                                <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-300">Process Type</th>
+                                                <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-300">Total Revenue</th>
+                                                <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-300">Staff Cost</th>
+                                                <th className="px-4 py-3 font-semibold text-slate-700 dark:text-slate-300">Net Margin</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                            {stats.processTypeBreakdown?.map((item) => (
+                                                <tr key={item.type} className="hover:bg-white/40 dark:hover:bg-white/5 transition-colors">
+                                                    <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{item.type}</td>
+                                                    <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{formatCurrency(item.rev)}</td>
+                                                    <td className="px-4 py-3 text-red-500 font-medium">{formatCurrency(item.cost)}</td>
+                                                    <td className={cn(
+                                                        "px-4 py-3 font-bold",
+                                                        item.margin >= 0 ? "text-emerald-500" : "text-red-500"
+                                                    )}>
+                                                        {formatCurrency(item.margin)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                        <tfoot>
+                                            <tr className="bg-slate-100/30 dark:bg-slate-800/30 font-bold border-t border-slate-200 dark:border-slate-700">
+                                                <td className="px-4 py-3 text-slate-900 dark:text-white">TOTAL</td>
+                                                <td className="px-4 py-3 text-slate-900 dark:text-white">{formatCurrency(stats.totalRevenue)}</td>
+                                                <td className="px-4 py-3 text-red-500">{formatCurrency(stats.totalProjectCosts)}</td>
+                                                <td className="px-4 py-3 text-emerald-500">{formatCurrency(stats.totalRevenue - stats.totalProjectCosts)}</td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                </div>
+                            </section>
+
+                            {/* Employee List */}
+                            <section>
+                                <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
+                                    <Activity className="w-4 h-4 mr-2" /> Employee Cost Breakdown (Month)
+                                </h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {(stats.employeeCostList || []).map((emp) => (
+                                        <div key={emp.id} className="p-4 bg-white dark:bg-slate-700/30 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-between hover:border-primary/30 transition-all group">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-lg">
+                                                    {emp.name.charAt(0)}
+                                                </div>
+                                                <div>
+                                                    <p className="font-semibold text-slate-900 dark:text-white group-hover:text-primary transition-colors">{emp.name}</p>
+                                                    <p className="text-xs text-slate-500 dark:text-slate-400">{emp.role || 'Team Member'}</p>
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="font-bold text-slate-900 dark:text-white">{formatCurrency(emp.totalCost)}</p>
+                                                <p className="text-[10px] text-slate-400 uppercase">Monthly Consumption</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </section>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="p-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex justify-end">
+                            <button
+                                onClick={() => setIsModalOpen(false)}
+                                className="px-4 py-2 bg-slate-900 dark:bg-white dark:text-slate-900 text-white rounded-lg font-medium hover:opacity-90 transition-opacity"
+                            >
+                                Close Breakdown
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

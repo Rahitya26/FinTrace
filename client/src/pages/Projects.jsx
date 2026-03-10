@@ -244,6 +244,17 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource }) => {
                                         </div>
                                     </div>
                                 )}
+                                {isFixedBid && project.deadline && (
+                                    <div className="mt-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/50 rounded-lg p-2.5 flex items-start gap-2.5 text-left">
+                                        <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-500 mt-0.5 shrink-0" />
+                                        <div>
+                                            <p className="text-[10px] uppercase font-bold text-red-800 dark:text-red-500 tracking-wider">Financial Risk HUD</p>
+                                            <p className="text-xs text-red-700 dark:text-red-400 mt-0.5 font-medium">
+                                                Every day past {format(new Date(project.deadline), 'dd MMM')} costs the company <span className="font-bold underline">{formatCurrency(project.debug_info?.dailyBurn || 0)}</span> in salary burn.
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -271,14 +282,14 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource }) => {
                                                                 <span className="text-slate-300 font-bold">{p.name || 'Unknown'}</span>
                                                                 <span>{formatCurrency(p.totalPlanRevenue || 0)}</span>
                                                             </div>
-                                                            <div className="text-slate-500 text-[10px] text-right">
-                                                                (₹{p.hourly_rate || 0}/hr) × 8 hrs/day × {p.workingDays || 0} days
+                                                            <div className="text-slate-500 text-[10px] text-right italic">
+                                                                {p.totalHours || 0} hrs approved (₹{p.hourly_rate || 0}/hr)
                                                             </div>
                                                         </div>
                                                     ))}
                                                 </div>
                                                 <div className="flex justify-between items-center pt-1.5 border-t border-slate-700 font-bold text-emerald-400">
-                                                    <span>Total Generated</span>
+                                                    <span>Total Approved</span>
                                                     <span>{formatCurrency(project.revenue_earned)}</span>
                                                 </div>
                                                 <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
@@ -320,13 +331,13 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource }) => {
                                                     {project.debug_info.plans.map((p, idx) => (
                                                         <div key={idx} className="flex justify-between items-center gap-4">
                                                             <span className="text-slate-300">{p.name || 'Unknown'}</span>
-                                                            <span>{formatCurrency(project.type === 'T&M' ? p.totalPlanCost : (p.calc_salary * p.calc_alloc))}</span>
+                                                            <span>{formatCurrency(p.totalPlanCost || 0)}</span>
                                                         </div>
                                                     ))}
                                                 </div>
                                                 <div className="flex justify-between items-center pt-1.5 border-t border-slate-700 font-bold text-emerald-400">
-                                                    <span>Total {project.type === 'T&M' ? 'to Date' : '/ month'}</span>
-                                                    <span>{isFixedBid || project.debug_info.type === 'Fixed' ? formatCurrency(project.debug_info.monthlyBurn) : formatCurrency(project.employee_costs)}</span>
+                                                    <span>Total {project.type === 'T&M' ? 'Approved' : 'Monthly Burn'}</span>
+                                                    <span>{formatCurrency(project.type === 'T&M' ? project.employee_costs : project.debug_info.monthlyBurn)}</span>
                                                 </div>
                                                 <div className="absolute top-full left-4 border-4 border-transparent border-t-slate-800"></div>
                                             </div>
@@ -928,7 +939,7 @@ const Projects = () => {
                 onClose={() => setSelectedProjectForResource(null)}
                 onAddSuccess={() => {
                     setSelectedProjectForResource(null);
-                    fetchProjects();
+                    fetchData();
                     toast.success('Resource assigned to project successfully');
                 }}
             />

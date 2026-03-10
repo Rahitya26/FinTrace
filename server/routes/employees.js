@@ -7,7 +7,26 @@ router.get('/', async (req, res) => {
     try {
         if (!req.query.page) {
             // Backward compatibility for dropdowns
-            const result = await db.query('SELECT * FROM employees ORDER BY name ASC');
+            const { projectId } = req.query;
+            let query = 'SELECT e.* FROM employees e';
+            let params = [];
+
+            if (projectId) {
+                query = `
+                    SELECT DISTINCT e.* 
+                    FROM employees e 
+                    JOIN project_resource_plans prp ON e.id = prp.employee_id 
+                    WHERE prp.project_id = $1 
+                    AND e.status = 'Active'
+                    AND (prp.end_date IS NULL OR prp.end_date >= CURRENT_DATE)
+                    ORDER BY e.name ASC
+                `;
+                params.push(projectId);
+            } else {
+                query += " WHERE e.status = 'Active' ORDER BY e.name ASC";
+            }
+
+            const result = await db.query(query, params);
             return res.json(result.rows);
         }
 
@@ -95,11 +114,13 @@ router.get('/:id', async (req, res) => {
 
 // POST /api/employees - Create new employee
 router.post('/', async (req, res) => {
-    const { name, role, monthly_salary, status, specialization, hourly_rate } = req.body;
+    require('fs').writeFileSync('req_body.json', JSON.stringify(req.body));
+    console.log("POST /api/employees req.body:", req.body);
+    const { name, role, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate } = req.body;
     try {
         const result = await db.query(
-            'INSERT INTO employees (name, role, monthly_salary, status, specialization, hourly_rate) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-            [name, role, monthly_salary || 0, status || 'Active', specialization || 'T&M', hourly_rate || 0]
+            'INSERT INTO employees (name, role, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+            [name, role, monthly_salary || 0, status || 'Active', specialization || 'T&M', hourly_rate || 0, usd_hourly_rate || 0]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -110,11 +131,11 @@ router.post('/', async (req, res) => {
 
 // PUT /api/employees/:id - Update employee
 router.put('/:id', async (req, res) => {
-    const { name, role, monthly_salary, status, specialization, hourly_rate } = req.body;
+    const { name, role, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate } = req.body;
     try {
         const result = await db.query(
-            'UPDATE employees SET name = $1, role = $2, monthly_salary = $3, status = $4, specialization = $5, hourly_rate = $6 WHERE id = $7 RETURNING *',
-            [name, role, monthly_salary, status, specialization, hourly_rate, req.params.id]
+            'UPDATE employees SET name = $1, role = $2, monthly_salary = $3, status = $4, specialization = $5, hourly_rate = $6, usd_hourly_rate = $7 WHERE id = $8 RETURNING *',
+            [name, role, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate, req.params.id]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Employee not found' });
