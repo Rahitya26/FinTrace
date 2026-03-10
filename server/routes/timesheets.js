@@ -21,37 +21,94 @@ router.get('/client-resources/:clientId', async (req, res) => {
     }
 });
 
-// POST /api/timesheets/log - Log daily hours
+// POST /api/timesheets/log - Log daily or range hours
 router.post('/log', async (req, res) => {
-    const { project_id, employee_id, date, hours_worked, description } = req.body;
+    const { project_id, employee_id, startDate, endDate, hours_worked, description } = req.body;
+    const db = require('../db');
+    const client = await db.pool.connect();
+
     try {
-        // Check if log already exists and is locked
-        const check = await pool.query(
-            'SELECT id, approval_id FROM timesheet_logs WHERE project_id = $1 AND employee_id = $2 AND date = $3',
-            [project_id, employee_id, date]
+        // 1. Financial Guardrail: Prevent future dates
+        const today = new Date().toISOString().split('T')[0];
+        if (endDate > today) {
+            return res.status(400).json({ error: 'Cannot log time for future dates.' });
+        }
+
+        // 2. Financial Guardrail: Check resource plan end_date
+        const planRes = await client.query(
+            'SELECT end_date FROM project_resource_plans WHERE employee_id = $1 AND project_id = $2',
+            [employee_id, project_id]
         );
 
-        if (check.rows.length > 0) {
-            if (check.rows[0].approval_id) {
-                return res.status(400).json({ error: 'This timesheet is locked and cannot be modified.' });
-            }
-            // Update existing log
-            const updated = await pool.query(
-                'UPDATE timesheet_logs SET hours_worked = $1, description = $2 WHERE id = $3 RETURNING *',
-                [hours_worked, description, check.rows[0].id]
-            );
-            return res.json(updated.rows[0]);
-        } else {
-            // Create new log
-            const inserted = await pool.query(
-                'INSERT INTO timesheet_logs (project_id, employee_id, date, hours_worked, description) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-                [project_id, employee_id, date, hours_worked, description]
-            );
-            return res.status(201).json(inserted.rows[0]);
+        if (planRes.rows.length === 0) {
+            return res.status(400).json({ error: 'No active resource plan found for this employee on this project.' });
         }
+
+        const planEndDate = planRes.rows[0].end_date ? new Date(planRes.rows[0].end_date).toISOString().split('T')[0] : null;
+        if (planEndDate && endDate > planEndDate) {
+            return res.status(400).json({ error: `Cannot log time past offboarding date (${planEndDate}).` });
+        }
+
+        // 3. Calculate Working Days
+        const workingDays = [];
+        let curr = new Date(startDate);
+        const end = new Date(endDate);
+
+        while (curr <= end) {
+            const dayOfWeek = curr.getDay();
+            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                workingDays.push(new Date(curr).toISOString().split('T')[0]);
+            }
+            curr.setDate(curr.getDate() + 1);
+        }
+
+        if (workingDays.length === 0) {
+            return res.status(400).json({ error: 'No working days (Mon-Fri) found in the selected range.' });
+        }
+
+        const dailyHours = Number(hours_worked) / workingDays.length;
+        const batch_id = workingDays.length > 1 ? `batch_${Date.now()}_${Math.random().toString(36).substr(2, 9)}` : null;
+
+        // Hour validation guardrail
+        if (dailyHours > 24) {
+            return res.status(400).json({ error: `Total hours exceed limit. You cannot log more than 24 hours per working day (Total Max: ${workingDays.length * 24}).` });
+        }
+
+        await client.query('BEGIN');
+
+        for (const day of workingDays) {
+            // Check if log already exists and is locked
+            const check = await client.query(
+                'SELECT id, approval_id FROM timesheet_logs WHERE project_id = $1 AND employee_id = $2 AND date = $3',
+                [project_id, employee_id, day]
+            );
+
+            if (check.rows.length > 0) {
+                if (check.rows[0].approval_id) {
+                    throw new Error(`Timesheet for ${day} is locked and cannot be modified.`);
+                }
+                // Update existing log
+                await client.query(
+                    'UPDATE timesheet_logs SET hours_worked = $1, description = $2, batch_id = $3 WHERE id = $4',
+                    [dailyHours, description, batch_id, check.rows[0].id]
+                );
+            } else {
+                // Create new log
+                await client.query(
+                    'INSERT INTO timesheet_logs (project_id, employee_id, date, hours_worked, description, batch_id) VALUES ($1, $2, $3, $4, $5, $6)',
+                    [project_id, employee_id, day, dailyHours, description, batch_id]
+                );
+            }
+        }
+
+        await client.query('COMMIT');
+        res.status(201).json({ message: 'Timesheet(s) logged successfully', daysLogged: workingDays.length });
     } catch (err) {
-        console.error(err.message);
-        res.status(500).json({ error: 'Server error logging timesheet' });
+        await client.query('ROLLBACK');
+        console.error("Error logging timesheet:", err.message);
+        res.status(400).json({ error: err.message || 'Server error logging timesheet' });
+    } finally {
+        client.release();
     }
 });
 

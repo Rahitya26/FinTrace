@@ -112,6 +112,75 @@ router.get('/:id', async (req, res) => {
     }
 });
 
+// GET /api/employees/:id/performance - Get employee performance trends (6 months)
+router.get('/:id/performance', async (req, res) => {
+    try {
+        const empId = req.params.id;
+        // 1. Get Employee Details
+        const empResult = await db.query('SELECT monthly_salary FROM employees WHERE id = $1', [empId]);
+        if (empResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Employee not found' });
+        }
+
+        const monthlySalary = Number(empResult.rows[0].monthly_salary) || 0;
+        const baselineCost = monthlySalary; // Pure monthly salary
+
+        // 2. Generate last 6 months list (to ensure zero-fill for missing data)
+        const months = [];
+        const dateTracker = new Date();
+        for (let i = 5; i >= 0; i--) {
+            const d = new Date(dateTracker.getFullYear(), dateTracker.getMonth() - i, 1);
+            months.push({
+                month: d.toLocaleString('default', { month: 'short' }) + ' ' + d.getFullYear().toString().slice(-2),
+                monthNum: d.getMonth() + 1,
+                yearNum: d.getFullYear(),
+                revenue: 0,
+                cost: baselineCost // Pure monthly salary
+            });
+        }
+
+        // 3. Query T&M Revenue for this employee across the last 6 months (Approved Timesheets)
+        const sixMonthsAgo = new Date(dateTracker.getFullYear(), dateTracker.getMonth() - 5, 1);
+
+        const revQuery = `
+            SELECT 
+                EXTRACT(YEAR FROM t.date) as year,
+                EXTRACT(MONTH FROM t.date) as month,
+                SUM(t.hours_worked * e.usd_hourly_rate * a.usd_to_inr_rate) as total_revenue
+            FROM timesheet_logs t
+            JOIN timesheet_approvals a ON t.approval_id = a.id
+            JOIN employees e ON t.employee_id = e.id
+            WHERE t.employee_id = $1 
+              AND t.date >= $2
+            GROUP BY 1, 2
+        `;
+        const revResult = await db.query(revQuery, [empId, sixMonthsAgo]);
+
+        // 4. Merge Revenue into Timeline array
+        let totalProfitContribution = 0;
+
+        const timeline = months.map(m => {
+            const row = revResult.rows.find(r => Number(r.year) === m.yearNum && Number(r.month) === m.monthNum);
+            const revenue = row ? Number(row.total_revenue) : 0;
+            totalProfitContribution += (revenue - m.cost);
+            return {
+                month: m.month,
+                revenue: Math.round(revenue),
+                cost: Math.round(m.cost)
+            };
+        });
+
+        res.json({
+            timeline,
+            totalProfitContribution: Math.round(totalProfitContribution)
+        });
+
+    } catch (err) {
+        console.error("Error fetching employee performance:", err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 // POST /api/employees - Create new employee
 router.post('/', async (req, res) => {
     require('fs').writeFileSync('req_body.json', JSON.stringify(req.body));

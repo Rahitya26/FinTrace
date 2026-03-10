@@ -3,8 +3,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, Search, Users, Trash2, Edit2, X, Briefcase, IndianRupee, DollarSign, List, LayoutGrid } from 'lucide-react';
 import { toast } from 'sonner';
 import Modal from '../components/Modal';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { cn, formatCurrency } from '../lib/utils';
-import { getEmployees, createEmployee, updateEmployee, deleteEmployee, offboardProjectResource } from '../lib/api';
+import { getEmployees, createEmployee, updateEmployee, deleteEmployee, offboardAllocation, getEmployeePerformance } from '../lib/api';
 
 const Employees = () => {
     const [employees, setEmployees] = useState([]);
@@ -23,12 +24,10 @@ const Employees = () => {
         monthly_salary: '',
         status: 'Active',
         specialization: 'Fixed Bid',
-        hourly_rate: '',
         usd_hourly_rate: ''
     });
     const [displayValues, setDisplayValues] = useState({
         monthly_salary: '',
-        hourly_rate: '',
         usd_hourly_rate: ''
     });
 
@@ -57,6 +56,27 @@ const Employees = () => {
     const [searchParams, setSearchParams] = useSearchParams();
     const specializationFilter = searchParams.get('specialization');
     const projectIdFilter = searchParams.get('projectId');
+
+    // Performance Modal State
+    const [isPerformanceModalOpen, setIsPerformanceModalOpen] = useState(false);
+    const [performanceData, setPerformanceData] = useState(null);
+    const [isPerformanceLoading, setIsPerformanceLoading] = useState(false);
+    const [selectedEmployeeName, setSelectedEmployeeName] = useState('');
+
+    const openPerformanceModal = async (employee) => {
+        setIsPerformanceModalOpen(true);
+        setSelectedEmployeeName(employee.name);
+        setIsPerformanceLoading(true);
+        setPerformanceData(null);
+        try {
+            const res = await getEmployeePerformance(employee.id);
+            setPerformanceData(res.data);
+        } catch (error) {
+            toast.error("Failed to load performance data");
+        } finally {
+            setIsPerformanceLoading(false);
+        }
+    };
 
     // Removed redundant useEffect to prevent race conditions
 
@@ -92,8 +112,8 @@ const Employees = () => {
     };
 
     const openAddModal = () => {
-        setFormData({ name: '', role: '', monthly_salary: '', status: 'Active', specialization: 'Fixed Bid', hourly_rate: '', usd_hourly_rate: '' });
-        setDisplayValues({ monthly_salary: '', hourly_rate: '', usd_hourly_rate: '' });
+        setFormData({ name: '', role: '', monthly_salary: '', status: 'Active', specialization: 'Fixed Bid', usd_hourly_rate: '' });
+        setDisplayValues({ monthly_salary: '', usd_hourly_rate: '' });
         setIsEditing(false);
         setCurrentEmployee(null);
         setIsModalOpen(true);
@@ -106,12 +126,10 @@ const Employees = () => {
             monthly_salary: employee.monthly_salary,
             status: employee.status,
             specialization: employee.specialization || 'Fixed Bid',
-            hourly_rate: employee.hourly_rate,
             usd_hourly_rate: employee.usd_hourly_rate
         });
         setDisplayValues({
             monthly_salary: employee.monthly_salary ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(employee.monthly_salary) : '',
-            hourly_rate: employee.hourly_rate ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(employee.hourly_rate) : '',
             usd_hourly_rate: employee.usd_hourly_rate ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(employee.usd_hourly_rate) : ''
         });
         setIsEditing(true);
@@ -127,7 +145,6 @@ const Employees = () => {
             const submissionData = {
                 ...formData,
                 monthly_salary: formData.monthly_salary || 0,
-                hourly_rate: formData.hourly_rate || 0,
                 usd_hourly_rate: formData.usd_hourly_rate || 0
             };
 
@@ -313,11 +330,11 @@ const Employees = () => {
                                             {/* Specialization / Rate Display */}
                                             <div className="flex flex-col items-start">
                                                 <span className="text-[10px] text-slate-400 uppercase tracking-tighter">
-                                                    {employee.specialization === 'T&M' ? 'Rate/Hr' : 'Base Salary'}
+                                                    {employee.specialization === 'T&M' ? 'Rate/Hr (USD)' : 'Monthly Salary'}
                                                 </span>
                                                 <span className="text-xs font-mono text-slate-600 dark:text-slate-300">
                                                     {employee.specialization === 'T&M'
-                                                        ? formatCurrency(employee.hourly_rate)
+                                                        ? `$${employee.usd_hourly_rate}`
                                                         : formatCurrency(employee.monthly_salary)
                                                     }
                                                 </span>
@@ -326,9 +343,16 @@ const Employees = () => {
                                     </div>
                                 </div>
 
+                                {/* Performance Click Overlay (Opens Performance Modal) */}
+                                <div
+                                    className="absolute inset-0 z-0 cursor-pointer"
+                                    onClick={() => openPerformanceModal(employee)}
+                                    title="View Performance Trends"
+                                ></div>
+
                                 {/* Actions Area */}
                                 {!employee.offboarded_date && (
-                                    <div className="absolute top-2 right-2 flex gap-1 transform translate-x-12 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 transition-all duration-200">
+                                    <div className="absolute top-2 right-2 flex gap-1 transform translate-x-12 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 transition-all duration-200 z-10">
                                         {!projectIdFilter && (
                                             <button
                                                 onClick={() => openEditModal(employee)}
@@ -469,23 +493,7 @@ const Employees = () => {
                                             />
                                         </div>
                                     </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                                            Hourly Rate (INR) <span className="text-red-500">*</span>
-                                        </label>
-                                        <div className="relative">
-                                            <IndianRupee className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                                            <input
-                                                type="text"
-                                                name="hourly_rate"
-                                                className="pl-9 w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
-                                                placeholder="Internal billing rate"
-                                                value={displayValues.hourly_rate}
-                                                onChange={(e) => handleCurrencyChange('hourly_rate', e.target.value)}
-                                                required={true}
-                                            />
-                                        </div>
-                                    </div>
+
                                     <div>
                                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                                             USD Hourly Rate <span className="text-red-500">*</span>
@@ -586,6 +594,65 @@ const Employees = () => {
                             {isDeleting ? 'Processing...' : (projectIdFilter ? 'Off-board Resource' : 'Delete Employee')}
                         </button>
                     </div>
+                </div>
+            </Modal>
+
+            {/* Performance Modal */}
+            <Modal
+                isOpen={isPerformanceModalOpen}
+                onClose={() => setIsPerformanceModalOpen(false)}
+                title={`${selectedEmployeeName} - 6 Month Track Record`}
+            >
+                <div className="min-h-[300px] flex flex-col justify-center">
+                    {isPerformanceLoading ? (
+                        <div className="flex flex-col items-center text-slate-500">
+                            <div className="w-8 h-8 border-4 border-slate-200 border-t-primary rounded-full animate-spin mb-4"></div>
+                            <p>Loading performance data...</p>
+                        </div>
+                    ) : performanceData ? (
+                        <div className="space-y-6">
+                            <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
+                                <div>
+                                    <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">6-Month Profit Contribution</p>
+                                    <p className={cn(
+                                        "text-2xl font-bold mt-1",
+                                        performanceData.totalProfitContribution > 0 ? "text-emerald-600 dark:text-emerald-400" :
+                                            performanceData.totalProfitContribution < 0 ? "text-red-600 dark:text-red-400" :
+                                                "text-slate-700 dark:text-slate-300"
+                                    )}>
+                                        {performanceData.totalProfitContribution > 0 ? '+' : ''}
+                                        {formatCurrency(performanceData.totalProfitContribution)}
+                                    </p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-sm text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">Monthly Salary</p>
+                                    <p className="text-lg font-semibold text-slate-700 dark:text-slate-300 mt-1">
+                                        {formatCurrency(performanceData.timeline[0]?.cost || 0)} <span className="text-xs font-normal text-slate-400">/mo</span>
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="h-64 w-full mt-4">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={performanceData.timeline} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                                        <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748B' }} dy={10} />
+                                        <YAxis hide domain={['dataMin - 10000', 'dataMax + 10000']} />
+                                        <RechartsTooltip
+                                            formatter={(value) => formatCurrency(value)}
+                                            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
+                                            itemStyle={{ fontSize: '14px', fontWeight: 500 }}
+                                            labelStyle={{ color: '#64748B', marginBottom: '4px' }}
+                                        />
+                                        <Line type="monotone" dataKey="revenue" name="T&M Revenue" stroke="#10B981" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} />
+                                        <Line type="stepAfter" dataKey="cost" name="Monthly Salary" stroke="#EF4444" strokeWidth={2} strokeDasharray="5 5" dot={false} />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+                    ) : (
+                        <p className="text-center text-slate-500">Failed to load data.</p>
+                    )}
                 </div>
             </Modal>
         </div >

@@ -1,9 +1,62 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { format, subDays } from 'date-fns';
 import { toast } from 'sonner';
-import { Clock, Plus, Calendar, Save, Coffee, Lock, ChevronDown, Search, X } from 'lucide-react';
+import { Clock, Plus, Calendar, Save, Coffee, Lock, ChevronDown, ChevronRight, Search, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { getEmployees, getProjects, getTimesheets, logTimesheet, getClients, getClientResources } from '../lib/api';
+
+const TimesheetGroupedRow = ({ group }) => {
+    const [isExpanded, setIsExpanded] = useState(false);
+    return (
+        <div className="border border-slate-100 dark:border-slate-700/50 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors relative">
+            {group.approval_id && (
+                <div className="absolute top-4 right-4 text-emerald-500 flex items-center text-xs font-medium px-2 py-1 bg-emerald-50 dark:bg-emerald-900/20 rounded border border-emerald-100 dark:border-emerald-800/30">
+                    <Lock className="w-3 h-3 mr-1" /> Approved
+                </div>
+            )}
+
+            <div className="p-4 flex flex-col sm:flex-row gap-2 sm:gap-6 cursor-pointer" onClick={() => setIsExpanded(!isExpanded)}>
+                <div className="w-40 flex-shrink-0">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white flex items-center">
+                        {isExpanded ? <ChevronDown className="w-4 h-4 mr-1 text-slate-400" /> : <ChevronRight className="w-4 h-4 mr-1 text-slate-400" />}
+                        {format(new Date(Math.min(...group.entry_dates)), 'MMM dd')} - {format(new Date(Math.max(...group.entry_dates)), 'MMM dd, yyyy')}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1 ml-5">
+                        <p className={cn(
+                            "text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded",
+                            group.total_hours === 0
+                                ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                                : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                        )}>
+                            {group.total_hours} hrs
+                        </p>
+                    </div>
+                </div>
+                <div className="flex-1">
+                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200 mb-1">{group.project_name}</p>
+                    <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-2">{group.description}</p>
+                </div>
+            </div>
+
+            {isExpanded && (
+                <div className="bg-slate-50/50 dark:bg-slate-800/30 border-t border-slate-100 dark:border-slate-700/50 p-2 space-y-1">
+                    {group.logs.map(log => (
+                        <div key={log.id} className="flex justify-between items-center text-xs px-9 py-2 hover:bg-white dark:hover:bg-slate-800 rounded">
+                            <span className="text-slate-500 dark:text-slate-400 font-medium w-32">{format(new Date(log.date), 'EEE, MMM dd')}</span>
+                            <span className="text-slate-600 dark:text-slate-300 flex-1">{log.description}</span>
+                            <span className={cn(
+                                "font-bold px-2 py-0.5 rounded ml-4",
+                                Number(log.hours_worked) === 0 ? "text-amber-600 bg-amber-50" : "text-blue-600 bg-blue-50"
+                            )}>
+                                {log.hours_worked}h
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
 
 const Timesheets = () => {
     const [employees, setEmployees] = useState([]); // Project-specific employees
@@ -22,11 +75,36 @@ const Timesheets = () => {
         client_id: '',
         employee_id: '',
         project_id: '',
-        date: new Date().toISOString().split('T')[0],
+        startDate: new Date().toISOString().split('T')[0],
+        endDate: new Date().toISOString().split('T')[0],
         hours_worked: '',
         description: '',
         is_leave: false
     });
+
+    const [workingDaysCount, setWorkingDaysCount] = useState(1);
+
+    // Calculate working days whenever dates change
+    useEffect(() => {
+        if (!formData.startDate || !formData.endDate) return;
+
+        const start = new Date(formData.startDate);
+        const end = new Date(formData.endDate);
+
+        if (end < start) {
+            setWorkingDaysCount(0);
+            return;
+        }
+
+        let count = 0;
+        let curr = new Date(start);
+        while (curr <= end) {
+            const day = curr.getDay();
+            if (day !== 0 && day !== 6) count++;
+            curr.setDate(curr.getDate() + 1);
+        }
+        setWorkingDaysCount(count);
+    }, [formData.startDate, formData.endDate]);
 
     const [filterEmployee, setFilterEmployee] = useState('');
     const [filterSearch, setFilterSearch] = useState('');
@@ -155,8 +233,18 @@ const Timesheets = () => {
     const handleSubmit = async (e) => {
         e.preventDefault();
 
-        if (!formData.employee_id || !formData.project_id || !formData.date) {
+        if (!formData.employee_id || !formData.project_id || !formData.startDate || !formData.endDate) {
             toast.error("Please fill in all required fields.");
+            return;
+        }
+
+        if (new Date(formData.endDate) < new Date(formData.startDate)) {
+            toast.error("End date cannot be before start date.");
+            return;
+        }
+
+        if (workingDaysCount === 0) {
+            toast.error("No working days found in the selected range.");
             return;
         }
 
@@ -165,11 +253,18 @@ const Timesheets = () => {
             return;
         }
 
+        const dailyHours = Number(formData.hours_worked) / workingDaysCount;
+        if (dailyHours > 24) {
+            toast.error(`Total hours exceed limit (${workingDaysCount * 24} hrs max for this range).`);
+            return;
+        }
+
         try {
             await logTimesheet({
                 employee_id: formData.employee_id,
                 project_id: formData.project_id,
-                date: formData.date,
+                startDate: formData.startDate,
+                endDate: formData.endDate,
                 hours_worked: Number(formData.hours_worked),
                 description: formData.description
             });
@@ -216,16 +311,42 @@ const Timesheets = () => {
                         </div>
 
                         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Date</label>
-                                <input
-                                    type="date"
-                                    max={new Date().toISOString().split('T')[0]}
-                                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white dark:[color-scheme:dark]"
-                                    value={formData.date}
-                                    onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                                    required
-                                />
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Start Date</label>
+                                    <input
+                                        type="date"
+                                        max={new Date().toISOString().split('T')[0]}
+                                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white dark:[color-scheme:dark]"
+                                        value={formData.startDate}
+                                        onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">End Date</label>
+                                    <input
+                                        type="date"
+                                        max={new Date().toISOString().split('T')[0]}
+                                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white dark:[color-scheme:dark]"
+                                        value={formData.endDate}
+                                        onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                                        required
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-between px-3 py-2 bg-slate-50 dark:bg-slate-900/30 rounded-lg border border-slate-200 dark:border-slate-700/50">
+                                <div className="flex items-center gap-2">
+                                    <Calendar className="w-4 h-4 text-primary" />
+                                    <span className="text-xs font-bold text-slate-600 dark:text-slate-400">Total Working Days</span>
+                                </div>
+                                <span className={cn(
+                                    "text-sm font-black",
+                                    workingDaysCount > 0 ? "text-primary" : "text-red-500"
+                                )}>
+                                    {workingDaysCount} Days
+                                </span>
                             </div>
 
                             <div>
@@ -322,11 +443,13 @@ const Timesheets = () => {
 
                             <div className="flex items-center gap-4 py-2">
                                 <div className="flex-1">
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Hours</label>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                        Total Hours {workingDaysCount > 0 && <span className="text-[10px] text-slate-400 ml-1">(Max {workingDaysCount * 24})</span>}
+                                    </label>
                                     <input
                                         type="number"
                                         min="0"
-                                        max="24"
+                                        max={workingDaysCount * 24}
                                         step="0.5"
                                         className={cn(
                                             "w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary/50 transition-colors",
@@ -336,6 +459,7 @@ const Timesheets = () => {
                                         )}
                                         value={formData.hours_worked}
                                         onChange={(e) => setFormData({ ...formData, hours_worked: e.target.value })}
+                                        placeholder={workingDaysCount > 1 ? `Total for ${workingDaysCount} days` : "Hours worked"}
                                         disabled={formData.is_leave}
                                         required
                                     />
@@ -466,35 +590,29 @@ const Timesheets = () => {
                                 </div>
                             ) : (
                                 <div className="space-y-3">
-                                    {logs.map((log) => (
-                                        <div key={log.id} className="p-4 border border-slate-100 dark:border-slate-700/50 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors relative group">
-                                            {log.approval_id && (
-                                                <div className="absolute top-4 right-4 text-emerald-500 flex items-center text-xs font-medium px-2 py-1 bg-emerald-50 dark:bg-emerald-900/20 rounded border border-emerald-100 dark:border-emerald-800/30">
-                                                    <Lock className="w-3 h-3 mr-1" /> Approved
-                                                </div>
-                                            )}
+                                    {(() => {
+                                        const grouped = logs.reduce((acc, log) => {
+                                            const groupId = `${log.employee_id}_${log.project_id}_${log.description}`;
+                                            if (!acc[groupId]) {
+                                                acc[groupId] = { ...log, id: groupId, entry_dates: [new Date(log.date)], total_hours: Number(log.hours_worked), logs: [log] };
+                                            } else {
+                                                acc[groupId].entry_dates.push(new Date(log.date));
+                                                acc[groupId].total_hours += Number(log.hours_worked);
+                                                acc[groupId].logs.push(log);
+                                            }
+                                            return acc;
+                                        }, {});
 
-                                            <div className="flex flex-col sm:flex-row gap-2 sm:gap-6">
-                                                <div className="w-32 flex-shrink-0">
-                                                    <p className="text-sm font-semibold text-slate-900 dark:text-white">
-                                                        {format(new Date(log.date), 'MMM dd, yyyy')}
-                                                    </p>
-                                                    <p className={cn(
-                                                        "text-xs font-bold mt-1 inline-block px-2 py-0.5 rounded",
-                                                        Number(log.hours_worked) === 0
-                                                            ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                                                            : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                                                    )}>
-                                                        {Number(log.hours_worked)} hrs
-                                                    </p>
-                                                </div>
-                                                <div className="flex-1">
-                                                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200 mb-1">{log.project_name}</p>
-                                                    <p className="text-sm text-slate-500 dark:text-slate-400">{log.description}</p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
+                                        return Object.values(grouped)
+                                            .sort((a, b) => {
+                                                const dateA = Math.max(...a.entry_dates);
+                                                const dateB = Math.max(...b.entry_dates);
+                                                return dateB - dateA;
+                                            })
+                                            .map((group) => (
+                                                <TimesheetGroupedRow key={group.id} group={group} />
+                                            ));
+                                    })()}
                                 </div>
                             )}
                         </div>

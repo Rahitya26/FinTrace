@@ -26,6 +26,7 @@ export const getEmployees = (params) => api.get('/employees', { params });
 export const createEmployee = (data) => api.post('/employees', data);
 export const updateEmployee = (id, data) => api.put(`/employees/${id}`, data);
 export const deleteEmployee = (id) => api.delete(`/employees/${id}`);
+export const getEmployeePerformance = (id) => api.get(`/employees/${id}/performance`);
 
 export const getAllocations = (projectId) => api.get(`/employees/allocations/${projectId}`);
 export const addAllocation = (data) => api.post('/employees/allocations', data);

@@ -89,6 +89,24 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
                 }
             }
 
+            // --- Performance Categorization Logic ---
+            let performance_category = 'NEUTRAL';
+
+            if (project.type === 'T&M') {
+                const billedRev = approvedRevenue;
+                const costLimit = approvedCost * 1.20; // Needs 20% margin to be a generator
+
+                if (billedRev >= costLimit && billedRev > 0) {
+                    performance_category = 'GENERATOR';
+                } else if (billedRev < approvedCost || (approvedHours > 0 && billedRev === 0)) {
+                    performance_category = 'BURDEN';
+                }
+            } else {
+                // Fixed Bid Logic (evaluated globally down below, default to Neutral for now, 
+                // but if we know project margin is taking a hit we can flag them all. 
+                // We'll calculate a placeholder and refine it after the loop).
+            }
+
             const existingPlan = enhancedPlans.find(p => Number(p.employee_id) === Number(plan.employee_id));
             if (existingPlan) {
                 if (project.type !== 'T&M') {
@@ -100,9 +118,17 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
                     existingPlan.offboarded = false;
                     existingPlan.calc_monthly_burn = project.type === 'T&M' ? (planMonthlyRevenue * 0.70) : planMonthlyBurn;
                 }
+                if (project.type === 'T&M') {
+                    // Update category if combining data shifted the metrics
+                    const combRev = existingPlan.totalPlanRevenue;
+                    const combCost = existingPlan.totalPlanCost;
+                    if (combRev >= (combCost * 1.20) && combRev > 0) existingPlan.performance_category = 'GENERATOR';
+                    else if (combRev < combCost) existingPlan.performance_category = 'BURDEN';
+                }
             } else {
                 enhancedPlans.push({
                     name: plan.name,
+                    role: plan.role,
                     employee_id: plan.employee_id,
                     alloc: plan.allocation_percentage,
                     salary: plan.monthly_salary,
@@ -115,7 +141,9 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
                     totalPlanCost: project.type === 'T&M' ? approvedCost : planTotalCost,
                     totalPlanRevenue: project.type === 'T&M' ? approvedRevenue : 0,
                     totalHours: approvedHours,
-                    calc_monthly_burn: project.type === 'T&M' ? (planMonthlyRevenue * 0.70) : planMonthlyBurn
+                    calc_monthly_burn: project.type === 'T&M' ? (planMonthlyRevenue * 0.70) : planMonthlyBurn,
+                    performance_category: performance_category,
+                    netProfitOrLoss: project.type === 'T&M' ? (approvedRevenue - approvedCost) : 0
                 });
             }
 
@@ -134,11 +162,55 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
                 const usdRate = Number(log.usd_hourly_rate) || 0;
                 const inrRate = Number(log.inr_hourly_rate) || 0;
 
-                computedRevenue += (hrs * usdRate * 84); // Standard projection FX
+                computedRevenue += (hrs * usdRate * 83.00); // Standard projection fallback for unapproved logs
                 computedCost += (hrs * inrRate);
 
                 // Add to enhanced plans as 'Projected' if not already approved?
                 // For simplicity, tooltips will show 'Approved' metrics.
+            });
+        }
+
+        // --- Post-Loop Fixed Bid/Value & Metric Synthesis ---
+        const totalActiveResources = enhancedPlans.filter(p => !p.offboarded).length || 1;
+        let dailyBudgetPerResource = 0;
+
+        if (project.type !== 'T&M') {
+            const projectMargin = computedRevenue - computedCost;
+
+            // Calculate project daily budget (Revenue / Total Working Days in Deadline)
+            let dailyBudget = 0;
+            if (project.deadline && project.start_date) {
+                const deadline = new Date(project.deadline);
+                const start = new Date(project.start_date);
+                if (deadline > start) {
+                    const totalDays = Math.ceil((deadline - start) / (1000 * 60 * 60 * 24));
+                    dailyBudget = computedRevenue / Math.max(1, totalDays);
+                }
+            }
+            dailyBudgetPerResource = dailyBudget / totalActiveResources;
+
+            enhancedPlans.forEach(plan => {
+                const planDailyBurn = (plan.calc_salary * plan.calc_alloc) / 22;
+                if (!plan.offboarded) {
+                    plan.netProfitOrLoss = dailyBudgetPerResource - planDailyBurn;
+                    if (plan.netProfitOrLoss > 0 && projectMargin >= 0) {
+                        plan.performance_category = 'GENERATOR';
+                    } else {
+                        plan.performance_category = 'BURDEN';
+                    }
+                } else {
+                    plan.netProfitOrLoss = 0;
+                }
+            });
+        } else {
+            // T&M: netProfitOrLoss was already set in the loop based on approved aggregates.
+            // Just ensure performance_category is consistent with netProfitOrLoss.
+            enhancedPlans.forEach(plan => {
+                if (plan.netProfitOrLoss > (plan.totalPlanCost * 0.20) && plan.netProfitOrLoss > 0) {
+                    plan.performance_category = 'GENERATOR';
+                } else if (plan.netProfitOrLoss < 0) {
+                    plan.performance_category = 'BURDEN';
+                }
             });
         }
 
@@ -161,7 +233,7 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
                 const usdRate = Number(log.usd_hourly_rate) || 0;
                 const inrRate = Number(log.inr_hourly_rate) || 0;
 
-                computedRevenue += (hrs * usdRate * 84);
+                computedRevenue += (hrs * usdRate * 83.00); // Standard projection fallback for unapproved logs
                 computedCost += (hrs * inrRate);
             });
         }

@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, Search, Briefcase, Users, ChevronDown, Trash2, Calendar, X, Loader2, AlertCircle, UserPlus } from 'lucide-react';
+import { Plus, Search, Briefcase, Users, ChevronDown, Trash2, Calendar, X, Loader2, AlertCircle, UserPlus, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { toast } from 'sonner';
 import Modal from '../components/Modal';
 import ProjectForm from '../components/ProjectForm';
 import AssignResourceModal from '../components/AssignResourceModal';
 import { cn, formatCurrency } from '../lib/utils';
-import { getProjects, createProject, getClients, updateProjectStatus, deleteProject, addAllocation } from '../lib/api';
+import { getProjects, createProject, getClients, updateProjectStatus, deleteProject, addAllocation, getEmployeePerformance } from '../lib/api';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 
 const PROCESS_COLORS = {
     'T&M': 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800',
@@ -40,7 +41,7 @@ const ProjectSkeleton = () => (
     </div>
 );
 
-const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource }) => {
+const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewTeam }) => {
     const [isExpanded, setIsExpanded] = useState(false);
     const navigate = useNavigate();
 
@@ -128,7 +129,7 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource }) => {
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
-                                navigate(`/employees?projectId=${project.id}`);
+                                onViewTeam(project);
                             }}
                             className="p-1 text-slate-400 hover:text-primary hover:bg-primary-50 dark:hover:bg-primary-900/20 rounded-full transition-colors"
                             title="View Team"
@@ -323,19 +324,60 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource }) => {
                                             <span className="text-[9px] uppercase tracking-wider text-primary bg-primary-50 dark:bg-primary-900/30 px-1.5 py-0.5 rounded cursor-help font-bold hover:bg-primary-100 transition-colors">
                                                 Staff
                                             </span>
-                                            <div className="absolute bottom-full left-0 mb-2 w-max min-w-[200px] max-w-[300px] bg-slate-800 text-white text-xs rounded-lg py-2 px-3 opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl text-left font-medium">
+                                            <div className="absolute bottom-full left-0 mb-2 w-max min-w-[240px] max-w-[320px] bg-slate-800 text-white text-xs rounded-lg py-2 px-3 opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl text-left font-medium">
                                                 <div className="mb-1.5 pb-1.5 border-b border-slate-700 text-[10px] text-slate-400 uppercase tracking-wider font-bold">
                                                     {project.type === 'T&M' ? 'Contractor Payout (70% of Billing)' : 'Staff Breakdown'}
                                                 </div>
-                                                <div className="space-y-1 mb-2">
-                                                    {project.debug_info.plans.map((p, idx) => (
-                                                        <div key={idx} className="flex justify-between items-center gap-4">
-                                                            <span className="text-slate-300">{p.name || 'Unknown'}</span>
-                                                            <span>{formatCurrency(p.totalPlanCost || 0)}</span>
+
+                                                {/* Profit Generators */}
+                                                {project.debug_info.plans.filter(p => p.performance_category === 'GENERATOR').length > 0 && (
+                                                    <div className="mb-2">
+                                                        <div className="text-[9px] text-emerald-400 font-bold uppercase tracking-wider mb-1 flex items-center gap-1">
+                                                            Profit Generators <ArrowUpRight className="w-3 h-3" />
                                                         </div>
-                                                    ))}
-                                                </div>
-                                                <div className="flex justify-between items-center pt-1.5 border-t border-slate-700 font-bold text-emerald-400">
+                                                        <div className="space-y-1">
+                                                            {project.debug_info.plans.filter(p => p.performance_category === 'GENERATOR').map((p, idx) => (
+                                                                <div key={idx} className="flex justify-between items-center gap-4">
+                                                                    <span className="text-slate-200">{p.name || 'Unknown'}</span>
+                                                                    <span>{formatCurrency(p.totalPlanCost || 0)}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Neutrals (if any) */}
+                                                {project.debug_info.plans.filter(p => p.performance_category === 'NEUTRAL').length > 0 && (
+                                                    <div className="mb-2">
+                                                        <div className="space-y-1">
+                                                            {project.debug_info.plans.filter(p => p.performance_category === 'NEUTRAL').map((p, idx) => (
+                                                                <div key={idx} className="flex justify-between items-center gap-4">
+                                                                    <span className="text-slate-300">{p.name || 'Unknown'}</span>
+                                                                    <span>{formatCurrency(p.totalPlanCost || 0)}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                {/* Cost Burdens */}
+                                                {project.debug_info.plans.filter(p => p.performance_category === 'BURDEN').length > 0 && (
+                                                    <div className="mb-2">
+                                                        <div className="text-[9px] text-rose-400 font-bold uppercase tracking-wider mb-1 flex items-center gap-1 mt-1 pt-1 border-t border-slate-700/50">
+                                                            Cost Burdens <ArrowDownRight className="w-3 h-3" />
+                                                        </div>
+                                                        <div className="space-y-1">
+                                                            {project.debug_info.plans.filter(p => p.performance_category === 'BURDEN').map((p, idx) => (
+                                                                <div key={idx} className="flex justify-between items-center gap-4">
+                                                                    <span className="text-slate-300">{p.name || 'Unknown'}</span>
+                                                                    <span className="text-rose-300">{formatCurrency(p.totalPlanCost || 0)}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+
+                                                <div className="flex justify-between items-center pt-1.5 border-t border-slate-700 font-bold text-emerald-400 mt-2">
                                                     <span>Total {project.type === 'T&M' ? 'Approved' : 'Monthly Burn'}</span>
                                                     <span>{formatCurrency(project.type === 'T&M' ? project.employee_costs : project.debug_info.monthlyBurn)}</span>
                                                 </div>
@@ -404,6 +446,28 @@ const Projects = () => {
 
     const [projectToDelete, setProjectToDelete] = useState(null);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [selectedTeamProject, setSelectedProjectTeam] = useState(null);
+
+    // Performance Modal State
+    const [isPerformanceModalOpen, setIsPerformanceModalOpen] = useState(false);
+    const [performanceData, setPerformanceData] = useState(null);
+    const [isPerformanceLoading, setIsPerformanceLoading] = useState(false);
+    const [selectedEmployee, setSelectedEmployee] = useState(null);
+
+    const openPerformanceModal = async (employee) => {
+        setIsPerformanceModalOpen(true);
+        setSelectedEmployee(employee);
+        setIsPerformanceLoading(true);
+        setPerformanceData(null);
+        try {
+            const res = await getEmployeePerformance(employee.employee_id || employee.id);
+            setPerformanceData(res.data);
+        } catch (error) {
+            toast.error("Failed to load performance data");
+        } finally {
+            setIsPerformanceLoading(false);
+        }
+    };
 
     useEffect(() => {
         fetchData();
@@ -839,6 +903,7 @@ const Projects = () => {
                                     onStatusChange={handleStatusChange}
                                     onDelete={handleDeleteProject}
                                     onAddResource={(p) => setSelectedProjectForResource(p)}
+                                    onViewTeam={(p) => setSelectedProjectTeam(p)}
                                 />
                             ))}
                         </div>
@@ -930,6 +995,211 @@ const Projects = () => {
                             {isDeleting ? 'Deleting...' : 'Delete Project'}
                         </button>
                     </div>
+                </div>
+            </Modal>
+
+            {/* Project Team Modal */}
+            {/* Project Team Modal */}
+            <Modal
+                isOpen={!!selectedTeamProject}
+                onClose={() => setSelectedProjectTeam(null)}
+                title={`${selectedTeamProject?.name} - Staff Performance`}
+            >
+                <div className="space-y-6 max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
+                    {/* Profit Generators */}
+                    <div>
+                        <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest flex items-center gap-2">
+                                <ArrowUpRight className="w-4 h-4" /> Profit Generators
+                            </h4>
+                            <span className="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold rounded-full border border-emerald-200 dark:border-emerald-800/50">
+                                {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'GENERATOR').length} Resources
+                            </span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3">
+                            {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'GENERATOR').map((p, idx) => (
+                                <button
+                                    key={idx}
+                                    onClick={() => openPerformanceModal(p)}
+                                    className="flex items-center justify-between p-3 bg-white dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-emerald-500/50 hover:shadow-md hover:shadow-emerald-500/10 transition-all group text-left"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-sm border border-emerald-200 dark:border-emerald-800/50 group-hover:scale-110 transition-transform">
+                                            {p.name.charAt(0).toUpperCase()}
+                                        </div>
+                                        <div>
+                                            <h5 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors uppercase tracking-tight">{p.name}</h5>
+                                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium uppercase tracking-tighter">{p.role || 'Team Member'}</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-4 text-right">
+                                        <div className="hidden sm:block">
+                                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter mb-0.5">Monthly Salary</div>
+                                            <div className="text-xs font-mono text-slate-600 dark:text-slate-300">{formatCurrency(p.salary)}</div>
+                                        </div>
+                                        <div className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-100 dark:border-emerald-800/50">
+                                            <div className="text-[9px] text-emerald-600 dark:text-emerald-400 font-black uppercase tracking-tighter mb-0.5">Net Profit</div>
+                                            <div className="text-sm font-black text-emerald-700 dark:text-emerald-300">+{formatCurrency(p.netProfitOrLoss)}</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            ))}
+                            {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'GENERATOR').length === 0 && (
+                                <div className="p-8 text-center bg-slate-50 dark:bg-slate-900/30 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+                                    <p className="text-sm text-slate-400 italic">No profit generators identified in this project yet.</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="h-px bg-slate-100 dark:bg-slate-700/50 mx-4"></div>
+
+                    {/* Cost Burdens */}
+                    <div>
+                        <div className="flex items-center justify-between mb-4">
+                            <h4 className="text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-widest flex items-center gap-2">
+                                <ArrowDownRight className="w-4 h-4" /> Cost Burdens
+                            </h4>
+                            <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-[10px] font-bold rounded-full border border-red-200 dark:border-red-800/50">
+                                {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'BURDEN').length} Resources
+                            </span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3">
+                            {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'BURDEN').map((p, idx) => (
+                                <button
+                                    key={idx}
+                                    onClick={() => openPerformanceModal(p)}
+                                    className="flex items-center justify-between p-3 bg-white dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-red-500/50 hover:shadow-md hover:shadow-red-500/10 transition-all group text-left"
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 flex items-center justify-center font-bold text-sm border border-red-200 dark:border-red-800/50 group-hover:scale-110 transition-transform">
+                                            {p.name.charAt(0).toUpperCase()}
+                                        </div>
+                                        <div>
+                                            <h5 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-red-600 dark:group-hover:text-red-400 transition-colors uppercase tracking-tight">{p.name}</h5>
+                                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium uppercase tracking-tighter">{p.role || 'Team Member'}</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-4 text-right">
+                                        <div className="hidden sm:block">
+                                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter mb-0.5">Monthly Salary</div>
+                                            <div className="text-xs font-mono text-slate-600 dark:text-slate-300">{formatCurrency(p.salary)}</div>
+                                        </div>
+                                        <div className="px-3 py-1.5 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-100 dark:border-red-800/50">
+                                            <div className="text-[9px] text-red-600 dark:text-red-400 font-black uppercase tracking-tighter mb-0.5">Net Loss</div>
+                                            <div className="text-sm font-black text-red-700 dark:text-red-300">-{formatCurrency(Math.abs(p.netProfitOrLoss))}</div>
+                                        </div>
+                                    </div>
+                                </button>
+                            ))}
+                            {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'BURDEN').length === 0 && (
+                                <div className="p-8 text-center bg-slate-50 dark:bg-slate-900/30 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+                                    <p className="text-sm text-slate-400 italic">No cost burdens identified currently. Performance is optimal!</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </Modal>
+
+            {/* Employee Performance Modal (Deep Linked) */}
+            <Modal
+                isOpen={isPerformanceModalOpen}
+                onClose={() => {
+                    setIsPerformanceModalOpen(false);
+                    // No need to reset selectedEmployee immediately if we want smooth transitions
+                }}
+                title={`${selectedEmployee?.name} - Performance Trends`}
+            >
+                <div className="min-h-[300px] flex flex-col justify-center">
+                    {isPerformanceLoading ? (
+                        <div className="flex flex-col items-center text-slate-500">
+                            <div className="w-8 h-8 border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin mb-4"></div>
+                            <p className="text-sm font-medium animate-pulse">Analyzing financial impact...</p>
+                        </div>
+                    ) : performanceData ? (
+                        <div className="space-y-6">
+                            <div className="flex items-center justify-between p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-inner">
+                                <div>
+                                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-black uppercase tracking-widest">Total Profit Contribution</p>
+                                    <p className={cn(
+                                        "text-3xl font-black mt-1",
+                                        performanceData.totalProfitContribution > 0 ? "text-emerald-600 dark:text-emerald-400" :
+                                            performanceData.totalProfitContribution < 0 ? "text-red-600 dark:text-red-400" :
+                                                "text-slate-700 dark:text-slate-300"
+                                    )}>
+                                        {performanceData.totalProfitContribution > 0 ? '+' : ''}
+                                        {formatCurrency(performanceData.totalProfitContribution)}
+                                    </p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-black uppercase tracking-widest">Monthly Salary</p>
+                                    <p className="text-xl font-black text-slate-800 dark:text-slate-200 mt-1">
+                                        {formatCurrency(performanceData.timeline[performanceData.timeline.length - 1]?.cost || 0)}
+                                    </p>
+                                    <p className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Base Baseline</p>
+                                </div>
+                            </div>
+
+                            <div className="h-64 w-full mt-4 bg-white dark:bg-slate-800/30 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={performanceData.timeline} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#CBD5E1" strokeOpacity={0.2} />
+                                        <XAxis
+                                            dataKey="month"
+                                            axisLine={false}
+                                            tickLine={false}
+                                            tick={{ fontSize: 10, fontWeight: 700, fill: '#94A3B8' }}
+                                            dy={10}
+                                        />
+                                        <YAxis hide domain={['dataMin - 5000', 'dataMax + 5000']} />
+                                        <RechartsTooltip
+                                            formatter={(value) => formatCurrency(value)}
+                                            contentStyle={{
+                                                borderRadius: '12px',
+                                                border: 'none',
+                                                boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)',
+                                                backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                                                backdropFilter: 'blur(4px)'
+                                            }}
+                                            itemStyle={{ fontSize: '12px', fontWeight: 800 }}
+                                            labelStyle={{ fontSize: '10px', fontWeight: 900, color: '#64748B', marginBottom: '8px', textTransform: 'uppercase' }}
+                                        />
+                                        <Line
+                                            type="monotone"
+                                            dataKey="revenue"
+                                            name="Billable Revenue"
+                                            stroke="#10B981"
+                                            strokeWidth={4}
+                                            dot={{ r: 4, strokeWidth: 3, stroke: '#10B981', fill: '#fff' }}
+                                            activeDot={{ r: 6, strokeWidth: 0 }}
+                                        />
+                                        <Line
+                                            type="stepAfter"
+                                            dataKey="cost"
+                                            name="Monthly Salary"
+                                            stroke="#EF4444"
+                                            strokeWidth={2}
+                                            strokeDasharray="6 6"
+                                            dot={false}
+                                        />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+
+                            <button
+                                onClick={() => setIsPerformanceModalOpen(false)}
+                                className="w-full py-3 bg-slate-900 dark:bg-slate-700 text-white font-black uppercase tracking-widest text-xs rounded-xl hover:bg-slate-800 dark:hover:bg-slate-600 transition-all active:scale-[0.98]"
+                            >
+                                Back to Project Team
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="text-center p-8">
+                            <AlertCircle className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                            <p className="text-sm text-slate-500 font-medium">No performance history found for this resource.</p>
+                        </div>
+                    )}
                 </div>
             </Modal>
 
