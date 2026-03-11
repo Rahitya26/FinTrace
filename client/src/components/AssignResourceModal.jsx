@@ -11,6 +11,7 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
     const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
     const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
     const [allocation, setAllocation] = useState(project?.type === 'T&M' ? 100 : 100);
+    const [usdRate, setUsdRate] = useState('');
     const [error, setError] = useState(null);
 
     // Dropdown state
@@ -26,6 +27,7 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
             setIsDropdownOpen(false);
             setStartDate(new Date().toISOString().split('T')[0]);
             setAllocation(project.type === 'T&M' ? 100 : 100);
+            setUsdRate('');
             setError(null);
         }
     }, [isOpen, project]);
@@ -68,7 +70,8 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
             await api.post(`/projects/${project.id}/resources`, {
                 employeeId: selectedEmployeeId,
                 startDate,
-                allocationPercentage: project.type === 'T&M' ? 100 : allocation
+                allocationPercentage: project.type === 'T&M' ? 100 : allocation,
+                usdRate: Number(usdRate)
             });
 
             onAddSuccess();
@@ -100,6 +103,7 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
         if (isAssigned) return;
 
         setSelectedEmployeeId(emp.id);
+        setUsdRate(emp.usd_hourly_rate || '');
         setIsDropdownOpen(false);
         setSearchTerm('');
     };
@@ -206,7 +210,12 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
                                                             }}
                                                         >
                                                             <div className="flex flex-col">
-                                                                <span className="font-semibold">{emp.name}</span>
+                                                                <div className="flex justify-between items-center">
+                                                                    <span className="font-semibold">{emp.name}</span>
+                                                                    <span className="text-[10px] font-mono font-bold bg-blue-50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-800">
+                                                                        Billable: ${Number(emp.usd_hourly_rate || 0).toFixed(2)}/hr
+                                                                    </span>
+                                                                </div>
                                                                 <span className="text-[11px] opacity-80 whitespace-nowrap">
                                                                     {emp.role} {isAssigned && '• Already Assigned'}
                                                                 </span>
@@ -239,8 +248,24 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
                                 />
                             </div>
 
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                    Billable Rate ($/hr)
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={usdRate}
+                                    onChange={(e) => setUsdRate(e.target.value)}
+                                    placeholder="Enter rate ($)"
+                                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                    required
+                                />
+                            </div>
+
                             {project.type !== 'T&M' && (
-                                <div>
+                                <div className="col-span-2">
                                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
                                         Allocation %
                                     </label>
@@ -260,17 +285,34 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
                         {selectedEmp && (
                             <div className="mt-6 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700">
                                 <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">Live Impact Preview</h4>
-                                {project.type === 'T&M' ? (
-                                    <div className="flex justify-between items-center text-sm">
-                                        <span className="text-slate-600 dark:text-slate-300">Live Billing Rate Adds</span>
-                                        <span className="font-bold text-emerald-600 dark:text-emerald-400">+{formatCurrency(Number(selectedEmp.hourly_rate || 0))} / hr</span>
+                                <div className="flex justify-between items-center">
+                                    <div className="flex items-center gap-1.5 group/billable">
+                                        <span className="text-slate-600 dark:text-slate-300">Effective Rate</span>
+                                        <div className="relative">
+                                            <AlertCircle className="w-3 h-3 text-slate-400 cursor-help" />
+                                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 bg-slate-800 text-white text-[10px] rounded shadow-xl opacity-0 group-billable:opacity-100 transition-opacity whitespace-nowrap z-[70] pointer-events-none">
+                                                Applied rate for this project
+                                                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
+                                            </div>
+                                        </div>
                                     </div>
-                                ) : (
-                                    <div className="flex justify-between items-center text-sm">
-                                        <span className="text-slate-600 dark:text-slate-300">Monthly Burn Increases By</span>
-                                        <span className="font-bold text-red-500 dark:text-red-400">+{formatCurrency((Number(selectedEmp.monthly_salary || 0)) * (Number(allocation) / 100))} / mo</span>
-                                    </div>
-                                )}
+                                    <span className="font-bold text-blue-600 dark:text-blue-400">
+                                        ${Number(usdRate || 0).toFixed(2)} / hr
+                                    </span>
+                                </div>
+                                <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                                    <span className="text-slate-600 dark:text-slate-400 text-xs italic">
+                                        {project.type === 'T&M' ? 'Billing Status' : 'Project Allocation'}
+                                    </span>
+                                    <span className={cn(
+                                        "font-black text-slate-900 dark:text-white"
+                                    )}>
+                                        {project.type === 'T&M'
+                                            ? 'Ready to Log Hours'
+                                            : `${allocation}% Assigned`
+                                        }
+                                    </span>
+                                </div>
                             </div>
                         )}
 

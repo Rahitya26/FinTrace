@@ -130,10 +130,13 @@ router.get('/', async (req, res) => {
     const { startDate, endDate, projectId, employeeId, status } = req.query;
     try {
         let query = `
-            SELECT t.*, p.name as project_name, p.type as project_type, p.usd_rate, e.name as employee_name, e.hourly_rate as employee_hourly_rate, e.usd_hourly_rate 
+            SELECT t.*, p.name as project_name, p.type as project_type, p.usd_rate as global_project_usd_rate, 
+                   e.name as employee_name, e.hourly_rate as employee_hourly_rate, e.usd_hourly_rate,
+                   COALESCE(prp.usd_rate, e.usd_hourly_rate) as effective_usd_rate
             FROM timesheet_logs t
             JOIN projects p ON t.project_id = p.id
             JOIN employees e ON t.employee_id = e.id
+            LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
             WHERE 1=1
         `;
         const values = [];
@@ -184,10 +187,13 @@ router.post('/approve', async (req, res) => {
 
         // Get unapproved logs and join employees table to grab their specific USD rate and INR hourly rate
         const unapprovedLogs = await pool.query(`
-            SELECT t.id, t.project_id, t.hours_worked, e.usd_hourly_rate, e.hourly_rate as inr_hourly_rate, p.type
+            SELECT t.id, t.project_id, t.hours_worked, 
+                   COALESCE(prp.usd_rate, e.usd_hourly_rate) as usd_hourly_rate, 
+                   e.hourly_rate as inr_hourly_rate, p.type
             FROM timesheet_logs t
             JOIN projects p ON t.project_id = p.id
             JOIN employees e ON t.employee_id = e.id
+            LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
             WHERE t.id = ANY($1::int[]) 
             AND t.approval_id IS NULL
         `, [logIds]);

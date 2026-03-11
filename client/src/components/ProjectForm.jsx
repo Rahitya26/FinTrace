@@ -30,7 +30,8 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
     const [resources, setResources] = useState([]); // { employeeId, allocation, name, salary }
     const [newResource, setNewResource] = useState({
         employeeId: '',
-        allocation: 100
+        allocation: 100,
+        usdRate: ''
     });
     const [empSearch, setEmpSearch] = useState('');
     const [selectedRole, setSelectedRole] = useState('');
@@ -98,6 +99,19 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
         setMargin(totalRevenue - totalCost);
     }, [formData.revenue, formData.startDate, formData.deadline, formData.status, resources, employees, formData.type]);
 
+    const selectEmployeeForResource = (empId) => {
+        const emp = employees.find(e => e.id === Number(empId));
+        if (emp) {
+            setNewResource({
+                ...newResource,
+                employeeId: empId,
+                usdRate: emp.usd_hourly_rate || ''
+            });
+        } else {
+            setNewResource({ ...newResource, employeeId: '' });
+        }
+    };
+
     const handleCurrencyChange = (field, value) => {
         const cleanValue = value.replace(/[^0-9.]/g, '');
         setFormData(prev => ({ ...prev, [field]: cleanValue }));
@@ -130,11 +144,13 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
             ...newResource,
             name: emp.name,
             salary: emp.monthly_salary,
-            hourly_rate: emp.hourly_rate
+            hourly_rate: emp.hourly_rate,
+            usdRate: newResource.usdRate || emp.usd_hourly_rate
         }]);
         setNewResource({
             employeeId: '',
-            allocation: 100
+            allocation: 100,
+            usdRate: ''
         });
     };
 
@@ -396,7 +412,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                     <select
                                         className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                                         value={newResource.employeeId}
-                                        onChange={(e) => setNewResource({ ...newResource, employeeId: e.target.value })}
+                                        onChange={(e) => selectEmployeeForResource(e.target.value)}
                                     >
                                         <option value="">Select Employee...</option>
                                         {employees
@@ -405,11 +421,26 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                             .filter(e => e.name.toLowerCase().includes(empSearch.toLowerCase()) || e.role.toLowerCase().includes(empSearch.toLowerCase()))
                                             .map(e => (
                                                 <option key={e.id} value={e.id}>
-                                                    {e.name} - {e.role} ({formData.type === 'T&M' ? `${formatCurrency(e.hourly_rate)}/hr` : `${formatCurrency(e.monthly_salary)}/mo`})
+                                                    {e.name} - {e.role} (Billable: ${Number(e.usd_hourly_rate || 0).toFixed(2)}/hr)
                                                 </option>
                                             ))}
                                     </select>
                                 </div>
+                            </div>
+
+                            <div className="w-full sm:w-[20%]">
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                    Billable Rate ($/hr)
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                    value={newResource.usdRate}
+                                    onChange={(e) => setNewResource({ ...newResource, usdRate: e.target.value })}
+                                    placeholder="Rate"
+                                />
                             </div>
 
                             {formData.type !== 'T&M' && (
@@ -427,6 +458,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                     />
                                 </div>
                             )}
+
                             <div className="w-full sm:w-[15%] flex justify-end sm:justify-start">
                                 <button
                                     type="button"
@@ -447,6 +479,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                         <tr>
                                             <th className="px-4 py-2">Employee</th>
                                             <th className="px-4 py-2">Start Date</th>
+                                            <th className="px-4 py-2">Billable Rate ($)</th>
                                             {formData.type !== 'T&M' && <th className="px-4 py-2">Allocation</th>}
                                             <th className="px-4 py-2 text-right">Actions</th>
                                         </tr>
@@ -467,6 +500,9 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                                     </td>
                                                     <td className="px-4 py-2 text-slate-600 dark:text-slate-300">
                                                         {r.startDate ? format(new Date(r.startDate), 'dd MMM yyyy') : 'N/A'}
+                                                    </td>
+                                                    <td className="px-4 py-2 text-slate-600 dark:text-slate-300 font-mono">
+                                                        ${Number(r.usdRate || 0).toFixed(2)}
                                                     </td>
                                                     {formData.type !== 'T&M' && (
                                                         <td className="px-4 py-2 text-slate-600 dark:text-slate-300">
@@ -544,8 +580,15 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                         </div>
                         <div className="text-xl font-bold text-slate-400 shrink-0">-</div>
                         <div className="shrink-0">
-                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1 flex items-center gap-1 group/cost">
                                 Expected Cost
+                                <div className="relative">
+                                    <AlertCircle className="w-2.5 h-2.5 text-slate-400 cursor-help" />
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 bg-slate-800 text-white text-[9px] rounded shadow-xl opacity-0 group-hover/cost:opacity-100 transition-opacity whitespace-nowrap z-[70] pointer-events-none">
+                                        Calculated as (Logged Hours * Internal Rate)
+                                        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
+                                    </div>
+                                </div>
                             </label>
                             <p className="text-xl font-bold text-slate-900 dark:text-white">
                                 {formatCurrency(calculatedCost)}

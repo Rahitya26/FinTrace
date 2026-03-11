@@ -85,7 +85,7 @@ router.get('/', async (req, res) => {
 
         // 2. Fetch Resource Plans with Employee Details
         const plansQuery = `
-            SELECT prp.*, e.monthly_salary, e.hourly_rate, e.name 
+            SELECT prp.*, e.monthly_salary, e.hourly_rate, e.usd_hourly_rate as default_usd_rate, e.name 
             FROM project_resource_plans prp
             JOIN employees e ON prp.employee_id = e.id
         `;
@@ -94,9 +94,12 @@ router.get('/', async (req, res) => {
 
         // 3. Fetch Unapproved Timesheet Logs for T&M Projections
         const unapprovedLogsQuery = `
-            SELECT t.project_id, t.employee_id, t.hours_worked, e.usd_hourly_rate, e.hourly_rate as inr_hourly_rate
+            SELECT t.project_id, t.employee_id, t.hours_worked, t.date, 
+                   COALESCE(prp.usd_rate, e.usd_hourly_rate) as usd_hourly_rate, 
+                   e.hourly_rate as inr_hourly_rate
             FROM timesheet_logs t
             JOIN employees e ON t.employee_id = e.id
+            LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
             WHERE t.approval_id IS NULL
         `;
         const unapprovedLogsResult = await db.query(unapprovedLogsQuery);
@@ -109,7 +112,8 @@ router.get('/', async (req, res) => {
                 t.employee_id, 
                 SUM(t.hours_worked) as total_hours,
                 SUM(t.hours_worked * e.hourly_rate) as total_inr_cost,
-                SUM(t.hours_worked * e.usd_hourly_rate * ta.usd_to_inr_rate) as total_inr_revenue
+                SUM(t.hours_worked * e.usd_hourly_rate * ta.usd_to_inr_rate) as total_inr_revenue,
+                MIN(t.date) as first_log_date
             FROM timesheet_logs t
             JOIN employees e ON t.employee_id = e.id
             JOIN timesheet_approvals ta ON t.approval_id = ta.id
@@ -253,8 +257,8 @@ router.post('/:id/resources', async (req, res) => {
         }
 
         const result = await db.query(
-            'INSERT INTO project_resource_plans (project_id, employee_id, allocation_percentage, start_date) VALUES ($1, $2, $3, $4) RETURNING *',
-            [id, employeeId, allocationPercentage || 100, startDate]
+            'INSERT INTO project_resource_plans (project_id, employee_id, allocation_percentage, start_date, usd_rate) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [id, employeeId, allocationPercentage || 100, startDate, req.body.usdRate || null]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
