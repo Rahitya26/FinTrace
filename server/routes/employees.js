@@ -152,6 +152,7 @@ router.get('/:id/performance', async (req, res) => {
             JOIN employees e ON t.employee_id = e.id
             WHERE t.employee_id = $1 
               AND t.date >= $2
+              AND t.approval_id IS NOT NULL
             GROUP BY 1, 2
         `;
         const revResult = await db.query(revQuery, [empId, sixMonthsAgo]);

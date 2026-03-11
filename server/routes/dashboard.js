@@ -75,15 +75,17 @@ router.get('/summary', async (req, res) => {
 
       totalRevenue += rev;
       totalProjectCosts += cost;
+      const projectedRev = Number(calculated.projectedRevenue) || 0;
 
       const type = project.type || 'Fixed Bid';
       if (!processTypeBreakdownMap[type]) {
-        processTypeBreakdownMap[type] = { rev: 0, cost: 0, margin: 0, count: 0 };
+        processTypeBreakdownMap[type] = { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 };
       }
       processTypeBreakdownMap[type].count += 1;
       processTypeBreakdownMap[type].rev += rev;
       processTypeBreakdownMap[type].cost += cost;
       processTypeBreakdownMap[type].margin += margin;
+      processTypeBreakdownMap[type].projectedRev += projectedRev;
 
       // Track individual employee costs from enhanced plans (Calculated monthly burn or approved cost)
       if (calculated.debug_info?.plans) {

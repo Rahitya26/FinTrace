@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { format, startOfWeek, endOfWeek, isSameDay } from 'date-fns';
+import { format, isSameDay } from 'date-fns';
 import { toast } from 'sonner';
 import { CheckSquare, DollarSign, Filter, Calendar, Check, AlertCircle, X, ChevronDown, ChevronUp, Lock } from 'lucide-react';
 import Modal from '../components/Modal';
@@ -11,13 +11,12 @@ const Approvals = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isApproving, setIsApproving] = useState(false);
 
-    // Grouping: 'Daily' or 'Weekly'
-    const [basis, setBasis] = useState('Daily');
+    // Loading states
 
     // Modal state
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [selectedGroup, setSelectedGroup] = useState(null);
-    const [fxRate, setFxRate] = useState('');
+    const [fxRate, setFxRate] = useState('83.15');
 
     useEffect(() => {
         fetchUnapproved();
@@ -42,47 +41,56 @@ const Approvals = () => {
         const groups = {};
 
         unapprovedLogs.forEach(log => {
-            const dateObj = new Date(log.date);
-            let key = '';
-            let startDate = '';
-            let endDate = '';
-            let title = '';
-
-            if (basis === 'Daily') {
-                startDate = format(dateObj, 'yyyy-MM-dd');
-                endDate = startDate;
-                key = startDate;
-                title = format(dateObj, 'MMM dd, yyyy');
-            } else {
-                // Weekly (Monday to Sunday)
-                const start = startOfWeek(dateObj, { weekStartsOn: 1 });
-                const end = endOfWeek(dateObj, { weekStartsOn: 1 });
-                startDate = format(start, 'yyyy-MM-dd');
-                endDate = format(end, 'yyyy-MM-dd');
-                key = startDate + '_' + endDate;
-                title = `${format(start, 'MMM dd')} - ${format(end, 'MMM dd, yyyy')}`;
-            }
+            // Using batch_id for grouping (submission range). 
+            // Fallback to daily key if batch_id is somehow missing for older logs.
+            const key = log.batch_id || `single_${log.id}`;
 
             if (!groups[key]) {
                 groups[key] = {
                     key,
-                    title,
-                    startDate,
-                    endDate,
+                    batch_id: log.batch_id,
+                    startDate: log.date,
+                    endDate: log.date,
                     logs: [],
                     totalHours: 0,
-                    projectedUsd: 0
+                    projectedUsd: 0,
+                    projectName: log.project_name,
+                    employeeName: log.employee_name
                 };
             }
 
             groups[key].logs.push(log);
-            groups[key].totalHours += Number(log.hours_worked);
-            groups[key].projectedUsd += Number(log.hours_worked) * Number(log.usd_hourly_rate || 0);
+
+            // Floating point fix: Use 2 decimal precision
+            groups[key].totalHours = Number.parseFloat((groups[key].totalHours + Number(log.hours_worked)).toFixed(2));
+            groups[key].projectedUsd = Number.parseFloat((groups[key].projectedUsd + (Number(log.hours_worked) * Number(log.usd_hourly_rate || 0))).toFixed(2));
+
+            // Track min/max dates
+            if (new Date(log.date) < new Date(groups[key].startDate)) groups[key].startDate = log.date;
+            if (new Date(log.date) > new Date(groups[key].endDate)) groups[key].endDate = log.date;
+        });
+
+        // Enhance with dynamic titles
+        const result = Object.values(groups).map(group => {
+            const start = new Date(group.startDate);
+            const end = new Date(group.endDate);
+
+            let title = '';
+            if (isSameDay(start, end)) {
+                title = format(start, 'MMM dd, yyyy');
+            } else {
+                title = `${format(start, 'MMM dd, yyyy')} - ${format(end, 'MMM dd, yyyy')}`;
+            }
+
+            return {
+                ...group,
+                title
+            };
         });
 
         // Sort groups by date descending
-        return Object.values(groups).sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
-    }, [unapprovedLogs, basis]);
+        return result.sort((a, b) => new Date(b.startDate) - new Date(a.startDate));
+    }, [unapprovedLogs]);
 
     const handleAcceptClick = (group) => {
         setSelectedGroup(group);
@@ -101,10 +109,9 @@ const Approvals = () => {
 
         setIsApproving(true);
         try {
+            const logIds = selectedGroup.logs.map(l => l.id);
             await approveTimesheets({
-                period_type: basis,
-                start_date: selectedGroup.startDate,
-                end_date: selectedGroup.endDate,
+                logIds,
                 usd_to_inr_rate: Number(fxRate)
             });
 
@@ -127,30 +134,10 @@ const Approvals = () => {
                     <p className="text-slate-500 dark:text-slate-400 mt-1">Review and approve employee timesheets to finalize billing.</p>
                 </div>
 
-                {/* Basis Switch */}
-                <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-slate-700">
-                    <button
-                        onClick={() => setBasis('Daily')}
-                        className={cn(
-                            "px-4 py-1.5 text-sm font-medium rounded-md transition-colors",
-                            basis === 'Daily'
-                                ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm"
-                                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300"
-                        )}
-                    >
-                        Daily Basis
-                    </button>
-                    <button
-                        onClick={() => setBasis('Weekly')}
-                        className={cn(
-                            "px-4 py-1.5 text-sm font-medium rounded-md transition-colors",
-                            basis === 'Weekly'
-                                ? "bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm"
-                                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300"
-                        )}
-                    >
-                        Weekly Basis
-                    </button>
+                {/* Submission Grouping Indicator */}
+                <div className="flex items-center gap-2 bg-indigo-50 dark:bg-indigo-900/20 px-3 py-1.5 rounded-lg border border-indigo-100 dark:border-indigo-800/50">
+                    <Calendar className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                    <span className="text-sm font-medium text-indigo-700 dark:text-indigo-300">Grouped by Submission Range</span>
                 </div>
             </div>
 
@@ -177,15 +164,15 @@ const Approvals = () => {
                                         </span>
                                     </div>
                                     <p className="text-sm text-slate-500 dark:text-slate-400">
-                                        Total Logged Hours: <strong className="text-slate-700 dark:text-slate-200">{group.totalHours} hrs</strong>
+                                        Total Logged Hours: <strong className="text-slate-700 dark:text-slate-200">{Number(group.totalHours).toFixed(2)} hrs</strong>
                                     </p>
                                 </div>
 
                                 <div className="flex items-center gap-4 w-full md:w-auto p-4 md:p-0 bg-slate-50 md:bg-transparent rounded-lg dark:bg-slate-800/50">
-                                    <div className="text-left md:text-right flex-1 md:flex-none mr-2">
-                                        <p className="text-xs text-slate-500 dark:text-slate-400 uppercase font-semibold">Projected Value</p>
-                                        <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400">
-                                            ${group.projectedUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                                    <div className="text-left md:text-right flex-1 md:flex-none mr-2 bg-amber-50 dark:bg-amber-900/20 px-3 py-1 rounded border border-amber-100 dark:border-amber-800/30">
+                                        <p className="text-[10px] text-amber-600 dark:text-amber-400 uppercase font-bold tracking-tight">Projected Revenue</p>
+                                        <p className="text-lg font-bold text-amber-700 dark:text-amber-300">
+                                            ₹{new Intl.NumberFormat('en-IN').format(Math.round(group.projectedUsd * 83.15))}
                                         </p>
                                     </div>
 
@@ -207,7 +194,7 @@ const Approvals = () => {
                                             <span className="font-semibold text-slate-700 dark:text-slate-200">{log.employee_name}</span>
                                             <span className="mx-2 text-slate-300 dark:text-slate-500">•</span>
                                             <span className="text-slate-500 dark:text-slate-400">{log.project_name}</span>
-                                            <span className="ml-2 font-medium text-blue-600 dark:text-blue-400">{Number(log.hours_worked)}h</span>
+                                            <span className="ml-2 font-medium text-blue-600 dark:text-blue-400">{Number(log.hours_worked).toFixed(2)}h</span>
                                         </div>
                                     ))}
                                     {group.logs.length > 5 && (
@@ -269,6 +256,14 @@ const Approvals = () => {
                                         autoFocus
                                     />
                                 </div>
+                                {fxRate && !isNaN(fxRate) && (
+                                    <div className="mt-2 flex justify-between items-center px-1">
+                                        <span className="text-xs text-slate-500 dark:text-slate-400">Projected Total (INR):</span>
+                                        <span className="text-sm font-bold text-slate-700 dark:text-slate-200">
+                                            ₹{new Intl.NumberFormat('en-IN').format(Math.round(selectedGroup.projectedUsd * Number(fxRate)))}
+                                        </span>
+                                    </div>
+                                )}
                                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                                     This rate will convert the entire block's revenue into INR for financial tracking.
                                 </p>

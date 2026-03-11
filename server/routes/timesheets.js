@@ -66,8 +66,8 @@ router.post('/log', async (req, res) => {
             return res.status(400).json({ error: 'No working days (Mon-Fri) found in the selected range.' });
         }
 
-        const dailyHours = Number(hours_worked) / workingDays.length;
-        const batch_id = workingDays.length > 1 ? `batch_${Date.now()}_${Math.random().toString(36).substr(2, 9)}` : null;
+        const dailyHours = Number(parseFloat(Number(hours_worked) / workingDays.length).toFixed(2));
+        const batch_id = `batch_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
         // Hour validation guardrail
         if (dailyHours > 24) {
@@ -76,7 +76,20 @@ router.post('/log', async (req, res) => {
 
         await client.query('BEGIN');
 
-        for (const day of workingDays) {
+        let totalTarget = Number(hours_worked);
+        let loggedSoFar = 0;
+
+        for (let i = 0; i < workingDays.length; i++) {
+            const day = workingDays[i];
+            let currentDayHours = dailyHours;
+
+            // On the last day, adjust to match the total target exactly
+            if (i === workingDays.length - 1) {
+                currentDayHours = Number((totalTarget - loggedSoFar).toFixed(2));
+            } else {
+                loggedSoFar = Number((loggedSoFar + currentDayHours).toFixed(2));
+            }
+
             // Check if log already exists and is locked
             const check = await client.query(
                 'SELECT id, approval_id FROM timesheet_logs WHERE project_id = $1 AND employee_id = $2 AND date = $3',
@@ -90,13 +103,13 @@ router.post('/log', async (req, res) => {
                 // Update existing log
                 await client.query(
                     'UPDATE timesheet_logs SET hours_worked = $1, description = $2, batch_id = $3 WHERE id = $4',
-                    [dailyHours, description, batch_id, check.rows[0].id]
+                    [currentDayHours, description, batch_id, check.rows[0].id]
                 );
             } else {
                 // Create new log
                 await client.query(
                     'INSERT INTO timesheet_logs (project_id, employee_id, date, hours_worked, description, batch_id) VALUES ($1, $2, $3, $4, $5, $6)',
-                    [project_id, employee_id, day, dailyHours, description, batch_id]
+                    [project_id, employee_id, day, currentDayHours, description, batch_id]
                 );
             }
         }
@@ -160,10 +173,14 @@ router.get('/', async (req, res) => {
 
 // POST /api/timesheets/approve - Manager approval
 router.post('/approve', async (req, res) => {
-    const { period_type, start_date, end_date, usd_to_inr_rate } = req.body;
+    const { logIds, usd_to_inr_rate } = req.body;
 
     try {
         await pool.query('BEGIN');
+
+        if (!logIds || !Array.isArray(logIds) || logIds.length === 0) {
+            return res.status(400).json({ error: 'No logs selected for approval.' });
+        }
 
         // Get unapproved logs and join employees table to grab their specific USD rate and INR hourly rate
         const unapprovedLogs = await pool.query(`
@@ -171,9 +188,9 @@ router.post('/approve', async (req, res) => {
             FROM timesheet_logs t
             JOIN projects p ON t.project_id = p.id
             JOIN employees e ON t.employee_id = e.id
-            WHERE t.date BETWEEN $1 AND $2 
+            WHERE t.id = ANY($1::int[]) 
             AND t.approval_id IS NULL
-        `, [start_date, end_date]);
+        `, [logIds]);
 
         if (unapprovedLogs.rows.length === 0) {
             await pool.query('ROLLBACK');
@@ -182,11 +199,11 @@ router.post('/approve', async (req, res) => {
 
         let totalUsdValue = 0;
         let totalInrValue = 0;
-        const logIds = [];
+        const validatedLogIds = [];
         const projectUpdates = {};
 
         for (const log of unapprovedLogs.rows) {
-            logIds.push(log.id);
+            validatedLogIds.push(log.id);
             const hrs = Number(log.hours_worked);
             const rate = Number(log.usd_hourly_rate || 0);
             const revUsd = hrs * rate;
@@ -210,9 +227,9 @@ router.post('/approve', async (req, res) => {
         // Create Approval Record
         const approvalRes = await pool.query(`
             INSERT INTO timesheet_approvals (period_type, start_date, end_date, usd_to_inr_rate, total_usd_value, total_inr_revenue, status)
-            VALUES ($1, $2, $3, $4, $5, $6, 'Accepted')
+            VALUES ('Weekly', (SELECT MIN(date) FROM timesheet_logs WHERE id = ANY($1::int[])), (SELECT MAX(date) FROM timesheet_logs WHERE id = ANY($1::int[])), $2, $3, $4, 'Accepted')
             RETURNING id
-        `, [period_type, start_date, end_date, usd_to_inr_rate, totalUsdValue, totalInrValue]);
+        `, [validatedLogIds, usd_to_inr_rate, totalUsdValue, totalInrValue]);
 
         const approvalId = approvalRes.rows[0].id;
 
@@ -221,7 +238,7 @@ router.post('/approve', async (req, res) => {
             UPDATE timesheet_logs 
             SET approval_id = $1 
             WHERE id = ANY($2::int[])
-        `, [approvalId, logIds]);
+        `, [approvalId, validatedLogIds]);
 
         // Update T&M Projects revenue and costs
         for (const [projectId, amounts] of Object.entries(projectUpdates)) {

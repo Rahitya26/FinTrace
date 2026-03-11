@@ -34,8 +34,10 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
             const planEndDateStr = plan.end_date ? new Date(plan.end_date).toISOString().split('T')[0] : null;
             const isOffboarded = planEndDateStr && planEndDateStr <= todayStr;
 
-            if (project.type !== 'T&M' && !isOffboarded) {
-                dailyBurn += (planMonthlyBurn / 22);
+            // --- HUD Fix Root calculation ---
+            const planDailyBurn = planMonthlyBurn / 30; // Rule: Monthly Salary / 30
+            if (!isOffboarded) {
+                dailyBurn += planDailyBurn;
             }
 
             let planMonthlyRevenue = 0;
@@ -55,6 +57,8 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
 
             let durationMonths = 0;
             let workingDays = 0;
+            let actualDaysElapsed = 0;
+
             if (today > planStartDate) {
                 let calculationEndDate = new Date();
                 if (plan.end_date) {
@@ -70,6 +74,7 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
 
                 const diffTime = Math.max(0, calculationEndDate - planStartDate);
                 durationMonths = diffTime / (1000 * 60 * 60 * 24 * 30.44);
+                actualDaysElapsed = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
                 let d = new Date(planStartDate.getTime());
                 while (d <= calculationEndDate) {
@@ -83,6 +88,8 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
             if (project.type === 'T&M') {
                 planTotalCost = 0; // T&M cost is handled separately by DB + Logs
             } else {
+                // Keep salary logic for Fixed Bid current status, but we use working days for "To Date" cost
+                // whereas "Daily Burn" for HUD/Tooltip uses /30.
                 planTotalCost = (planMonthlyBurn / 22) * workingDays;
                 if (!isOffboarded) {
                     totalMonthlyBurn += planMonthlyBurn;
@@ -101,10 +108,6 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
                 } else if (billedRev < approvedCost || (approvedHours > 0 && billedRev === 0)) {
                     performance_category = 'BURDEN';
                 }
-            } else {
-                // Fixed Bid Logic (evaluated globally down below, default to Neutral for now, 
-                // but if we know project margin is taking a hit we can flag them all. 
-                // We'll calculate a placeholder and refine it after the loop).
             }
 
             const existingPlan = enhancedPlans.find(p => Number(p.employee_id) === Number(plan.employee_id));
@@ -125,6 +128,7 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
                     if (combRev >= (combCost * 1.20) && combRev > 0) existingPlan.performance_category = 'GENERATOR';
                     else if (combRev < combCost) existingPlan.performance_category = 'BURDEN';
                 }
+                existingPlan.daysSinceAssignment += actualDaysElapsed;
             } else {
                 enhancedPlans.push({
                     name: plan.name,
@@ -138,6 +142,9 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
                     offboarded: isOffboarded,
                     durationMonths: durationMonths,
                     workingDays: workingDays,
+                    actualDaysElapsed: actualDaysElapsed,
+                    daysSinceAssignment: actualDaysElapsed,
+                    dailySalaryBurn: planDailyBurn,
                     totalPlanCost: project.type === 'T&M' ? approvedCost : planTotalCost,
                     totalPlanRevenue: project.type === 'T&M' ? approvedRevenue : 0,
                     totalHours: approvedHours,
@@ -150,25 +157,40 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
             return sum + planTotalCost;
         }, 0);
 
-        // For Fixed Value / Fixed Bid, ensure computedRevenue retains its static value from the DB
-        if (project.type !== 'T&M') {
-            computedRevenue = Number(project.revenue_earned) || 0;
-        } else {
+        // --- Financial segments (Segregation of Actual vs Projected) ---
+        let projectedRevenue = 0;
+        let projectedCost = 0;
+
+        if (project.type === 'T&M') {
+            // Actuals from approved logs
             computedRevenue = Number(project.revenue_earned) || 0;
             computedCost = Number(project.employee_costs) || 0;
 
+            // Projections from unapproved logs
             projectLogs.forEach(log => {
-                const hrs = Number(log.hours_worked) || 0;
+                const hrs = Number(parseFloat(Number(log.hours_worked) || 0).toFixed(2));
                 const usdRate = Number(log.usd_hourly_rate) || 0;
                 const inrRate = Number(log.inr_hourly_rate) || 0;
 
-                computedRevenue += (hrs * usdRate * 83.00); // Standard projection fallback for unapproved logs
-                computedCost += (hrs * inrRate);
-
-                // Add to enhanced plans as 'Projected' if not already approved?
-                // For simplicity, tooltips will show 'Approved' metrics.
+                // Rule: Default to 83.15 if locked_exchange_rate is null (Standard projection fallback)
+                projectedRevenue += (hrs * usdRate * 83.15);
+                projectedCost += (hrs * inrRate);
             });
+        } else {
+            // Fixed Bid: Revenue is budget-locked upon completion/overdue
+            const isOverdue = project.deadline && new Date(project.deadline) < today;
+            if (project.status === 'Completed' || isOverdue) {
+                const budget = Number(project.debug_info?.quotedBid) || Number(project.revenue_earned) || 0;
+                computedRevenue = budget;
+            } else {
+                computedRevenue = Number(project.revenue_earned) || 0;
+            }
+            computedCost = Number(project.employee_costs) || 0;
         }
+
+        debugInfo.projectedRevenue = projectedRevenue;
+        debugInfo.projectedCost = projectedCost;
+        debugInfo.totalUnapprovedHours = projectLogs.reduce((sum, log) => sum + Number(log.hours_worked), 0);
 
         // --- Post-Loop Fixed Bid/Value & Metric Synthesis ---
         const totalActiveResources = enhancedPlans.filter(p => !p.offboarded).length || 1;
@@ -206,10 +228,14 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
             // T&M: netProfitOrLoss was already set in the loop based on approved aggregates.
             // Just ensure performance_category is consistent with netProfitOrLoss.
             enhancedPlans.forEach(plan => {
-                if (plan.netProfitOrLoss > (plan.totalPlanCost * 0.20) && plan.netProfitOrLoss > 0) {
+                if (plan.totalHours === 0 && plan.netProfitOrLoss === 0) {
+                    plan.performance_category = 'PENDING';
+                } else if (plan.netProfitOrLoss > (plan.totalPlanCost * 0.20) && plan.netProfitOrLoss > 0) {
                     plan.performance_category = 'GENERATOR';
                 } else if (plan.netProfitOrLoss < 0) {
                     plan.performance_category = 'BURDEN';
+                } else {
+                    plan.performance_category = 'NEUTRAL';
                 }
             });
         }
@@ -243,6 +269,8 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
         ...project,
         employee_costs: computedCost,
         revenue_earned: computedRevenue,
+        projectedRevenue: projectedRevenue,
+        projectedCost: projectedCost,
         computedCost,
         computedRevenue,
         margin: computedRevenue - computedCost,

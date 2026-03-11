@@ -116,6 +116,20 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
                         {project.client_name}
                     </div>
                 </div>
+                <div className="flex -space-x-2 overflow-hidden ml-4">
+                    {project.debug_info?.plans?.map((plan, idx) => (
+                        <div
+                            key={idx}
+                            className="inline-block h-8 w-8 rounded-full ring-2 ring-white dark:ring-slate-800 bg-slate-100 dark:bg-slate-700 flex items-center justify-center overflow-hidden"
+                            title={`${plan.name} (${plan.role}) - ${plan.totalHours || 0} hrs`}
+                        >
+                            {plan.name?.charAt(0)}
+                        </div>
+                    ))}
+                    {(!project.debug_info?.plans || project.debug_info.plans.length === 0) && (
+                        <div className="text-[10px] text-slate-400 italic">No resources</div>
+                    )}
+                </div>
                 <div className="flex flex-col items-end gap-2">
                     <div className="flex items-center gap-2">
                         {isHighRisk && (
@@ -339,7 +353,7 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
                                                             {project.debug_info.plans.filter(p => p.performance_category === 'GENERATOR').map((p, idx) => (
                                                                 <div key={idx} className="flex justify-between items-center gap-4">
                                                                     <span className="text-slate-200">{p.name || 'Unknown'}</span>
-                                                                    <span>{formatCurrency(p.totalPlanCost || 0)}</span>
+                                                                    <span className="text-emerald-300 font-medium">+{formatCurrency(p.netProfitOrLoss || 0)}</span>
                                                                 </div>
                                                             ))}
                                                         </div>
@@ -370,7 +384,7 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
                                                             {project.debug_info.plans.filter(p => p.performance_category === 'BURDEN').map((p, idx) => (
                                                                 <div key={idx} className="flex justify-between items-center gap-4">
                                                                     <span className="text-slate-300">{p.name || 'Unknown'}</span>
-                                                                    <span className="text-rose-300">{formatCurrency(p.totalPlanCost || 0)}</span>
+                                                                    <span className="text-rose-300 font-medium">{formatCurrency(p.netProfitOrLoss || 0)}</span>
                                                                 </div>
                                                             ))}
                                                         </div>
@@ -999,104 +1013,122 @@ const Projects = () => {
             </Modal>
 
             {/* Project Team Modal */}
-            {/* Project Team Modal */}
             <Modal
                 isOpen={!!selectedTeamProject}
                 onClose={() => setSelectedProjectTeam(null)}
-                title={`${selectedTeamProject?.name} - Staff Performance`}
+                title={`${selectedTeamProject?.name} - Performance Hub`}
+                maxWidth="max-w-7xl"
             >
-                <div className="space-y-6 max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
-                    {/* Profit Generators */}
-                    <div>
-                        <div className="flex items-center justify-between mb-4">
-                            <h4 className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest flex items-center gap-2">
-                                <ArrowUpRight className="w-4 h-4" /> Profit Generators
+                <div className="flex flex-col md:flex-row gap-6 h-full max-h-[75vh] overflow-hidden">
+                    {/* Left Column: Assigned Resources (The Anchor) */}
+                    <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar border-r border-slate-100 dark:border-slate-700/50">
+                        <div className="flex items-center justify-between mb-4 sticky top-0 bg-white dark:bg-slate-900 z-10 py-1">
+                            <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                <Users className="w-4 h-4" /> Assigned Team
                             </h4>
-                            <span className="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold rounded-full border border-emerald-200 dark:border-emerald-800/50">
-                                {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'GENERATOR').length} Resources
+                            <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[10px] font-bold rounded-full border border-slate-200 dark:border-slate-700">
+                                {selectedTeamProject?.debug_info?.plans?.length || 0} Members
                             </span>
                         </div>
-                        <div className="grid grid-cols-1 gap-3">
-                            {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'GENERATOR').map((p, idx) => (
+
+                        <div className="space-y-3">
+                            {selectedTeamProject?.debug_info?.plans?.map((p, idx) => (
                                 <button
                                     key={idx}
                                     onClick={() => openPerformanceModal(p)}
-                                    className="flex items-center justify-between p-3 bg-white dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-emerald-500/50 hover:shadow-md hover:shadow-emerald-500/10 transition-all group text-left"
+                                    className="w-full flex items-center justify-between p-3 bg-white dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-primary/50 hover:shadow-md hover:shadow-primary/5 transition-all group text-left"
                                 >
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-sm border border-emerald-200 dark:border-emerald-800/50 group-hover:scale-110 transition-transform">
+                                        <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-900/40 text-slate-600 dark:text-slate-400 flex items-center justify-center font-bold text-sm border border-slate-200 dark:border-slate-800/50">
                                             {p.name.charAt(0).toUpperCase()}
                                         </div>
                                         <div>
-                                            <h5 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors uppercase tracking-tight">{p.name}</h5>
-                                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium uppercase tracking-tighter">{p.role || 'Team Member'}</p>
+                                            <h5 className="text-sm font-bold text-slate-900 dark:text-white transition-colors uppercase tracking-tight">{p.name}</h5>
+                                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{p.role || 'Team Member'}</p>
                                         </div>
                                     </div>
-                                    <div className="flex items-center gap-4 text-right">
-                                        <div className="hidden sm:block">
-                                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter mb-0.5">Monthly Salary</div>
-                                            <div className="text-xs font-mono text-slate-600 dark:text-slate-300">{formatCurrency(p.salary)}</div>
+                                    <div className="flex items-center gap-6 text-right">
+                                        <div>
+                                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter mb-0.5">Hours</div>
+                                            <div className="text-xs font-mono text-slate-700 dark:text-slate-300 font-bold">
+                                                {Number(p.totalHours || 0).toFixed(2)}
+                                            </div>
                                         </div>
-                                        <div className="px-3 py-1.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-100 dark:border-emerald-800/50">
-                                            <div className="text-[9px] text-emerald-600 dark:text-emerald-400 font-black uppercase tracking-tighter mb-0.5">Net Profit</div>
-                                            <div className="text-sm font-black text-emerald-700 dark:text-emerald-300">+{formatCurrency(p.netProfitOrLoss)}</div>
+                                        <div className="min-w-[80px]">
+                                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter mb-0.5">Burn</div>
+                                            <div className="text-xs font-mono text-slate-700 dark:text-slate-300 font-bold">
+                                                {formatCurrency(p.totalPlanCost || 0)}
+                                            </div>
                                         </div>
                                     </div>
                                 </button>
                             ))}
-                            {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'GENERATOR').length === 0 && (
+                            {(!selectedTeamProject?.debug_info?.plans || selectedTeamProject?.debug_info?.plans?.length === 0) && (
                                 <div className="p-8 text-center bg-slate-50 dark:bg-slate-900/30 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-                                    <p className="text-sm text-slate-400 italic">No profit generators identified in this project yet.</p>
+                                    <p className="text-sm text-slate-400 italic">No resources assigned to this project.</p>
                                 </div>
                             )}
                         </div>
                     </div>
 
-                    <div className="h-px bg-slate-100 dark:bg-slate-700/50 mx-4"></div>
-
-                    {/* Cost Burdens */}
-                    <div>
-                        <div className="flex items-center justify-between mb-4">
-                            <h4 className="text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-widest flex items-center gap-2">
-                                <ArrowDownRight className="w-4 h-4" /> Cost Burdens
-                            </h4>
-                            <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-[10px] font-bold rounded-full border border-red-200 dark:border-red-800/50">
-                                {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'BURDEN').length} Resources
-                            </span>
-                        </div>
-                        <div className="grid grid-cols-1 gap-3">
-                            {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'BURDEN').map((p, idx) => (
-                                <button
-                                    key={idx}
-                                    onClick={() => openPerformanceModal(p)}
-                                    className="flex items-center justify-between p-3 bg-white dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-red-500/50 hover:shadow-md hover:shadow-red-500/10 transition-all group text-left"
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400 flex items-center justify-center font-bold text-sm border border-red-200 dark:border-red-800/50 group-hover:scale-110 transition-transform">
-                                            {p.name.charAt(0).toUpperCase()}
+                    {/* Right Column: Performance Hub */}
+                    <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                        <div className="space-y-8">
+                            {/* Profit Generators */}
+                            <div>
+                                <h4 className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest flex items-center gap-2 mb-4">
+                                    <ArrowUpRight className="w-3 h-3" /> Profit Generators
+                                </h4>
+                                <div className="space-y-2">
+                                    {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'GENERATOR').map((p, idx) => (
+                                        <div key={idx} className="flex items-center justify-between p-2.5 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg border border-emerald-100/50 dark:border-emerald-800/20">
+                                            <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{p.name}</span>
+                                            <span className="text-xs font-black text-emerald-600 dark:text-emerald-400">+{formatCurrency(p.netProfitOrLoss)}</span>
                                         </div>
-                                        <div>
-                                            <h5 className="text-sm font-bold text-slate-900 dark:text-white group-hover:text-red-600 dark:group-hover:text-red-400 transition-colors uppercase tracking-tight">{p.name}</h5>
-                                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium uppercase tracking-tighter">{p.role || 'Team Member'}</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-4 text-right">
-                                        <div className="hidden sm:block">
-                                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter mb-0.5">Monthly Salary</div>
-                                            <div className="text-xs font-mono text-slate-600 dark:text-slate-300">{formatCurrency(p.salary)}</div>
-                                        </div>
-                                        <div className="px-3 py-1.5 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-100 dark:border-red-800/50">
-                                            <div className="text-[9px] text-red-600 dark:text-red-400 font-black uppercase tracking-tighter mb-0.5">Net Loss</div>
-                                            <div className="text-sm font-black text-red-700 dark:text-red-300">-{formatCurrency(Math.abs(p.netProfitOrLoss))}</div>
-                                        </div>
-                                    </div>
-                                </button>
-                            ))}
-                            {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'BURDEN').length === 0 && (
-                                <div className="p-8 text-center bg-slate-50 dark:bg-slate-900/30 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
-                                    <p className="text-sm text-slate-400 italic">No cost burdens identified currently. Performance is optimal!</p>
+                                    ))}
+                                    {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'GENERATOR').length === 0 && (
+                                        <p className="text-[10px] text-slate-400 italic px-2">No generators identified.</p>
+                                    )}
                                 </div>
-                            )}
+                            </div>
+
+                            {/* Pending Activity / New Assignment */}
+                            <div>
+                                <h4 className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest flex items-center gap-2 mb-4">
+                                    <Calendar className="w-3 h-3" /> New / Pending Activity
+                                </h4>
+                                <div className="space-y-2">
+                                    {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'PENDING' || p.performance_category === 'NEUTRAL').map((p, idx) => (
+                                        <div key={idx} className="flex items-center justify-between p-2.5 bg-indigo-50/50 dark:bg-indigo-900/10 rounded-lg border border-indigo-100/50 dark:border-indigo-800/20">
+                                            <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{p.name}</span>
+                                            <span className="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-tighter">{p.performance_category === 'PENDING' ? 'Awaiting Interaction' : 'Neutral Impact'}</span>
+                                        </div>
+                                    ))}
+                                    {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'PENDING' || p.performance_category === 'NEUTRAL').length === 0 && (
+                                        <p className="text-[10px] text-slate-400 italic px-2">No pending assignments.</p>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Cost Burdens */}
+                            <div>
+                                <h4 className="text-[10px] font-black text-rose-600 dark:text-rose-400 uppercase tracking-widest flex items-center gap-2 mb-4">
+                                    <ArrowDownRight className="w-3 h-3" /> Cost Burdens
+                                </h4>
+                                <div className="space-y-2">
+                                    {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'BURDEN').map((p, idx) => (
+                                        <div key={idx} className="flex items-center justify-between p-2.5 bg-rose-50/50 dark:bg-rose-900/10 rounded-lg border border-rose-100/50 dark:border-rose-800/20">
+                                            <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{p.name}</span>
+                                            <span className="text-xs font-black text-rose-600 dark:text-rose-400">-{formatCurrency(Math.abs(p.netProfitOrLoss))}</span>
+                                        </div>
+                                    ))}
+                                    {selectedTeamProject?.debug_info?.plans?.filter(p => p.performance_category === 'BURDEN').length === 0 && (
+                                        <div className="p-4 text-center bg-slate-50 dark:bg-slate-900/20 rounded-xl border border-dashed border-slate-200 dark:border-slate-800/50">
+                                            <p className="text-[11px] text-slate-400 italic">No cost burdens identified currently. Performance is optimal!</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

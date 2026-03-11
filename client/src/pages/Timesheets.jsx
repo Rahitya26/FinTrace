@@ -28,7 +28,7 @@ const TimesheetGroupedRow = ({ group }) => {
                                 ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
                                 : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
                         )}>
-                            {group.total_hours} hrs
+                            {Number(group.total_hours).toFixed(2)} hrs
                         </p>
                     </div>
                 </div>
@@ -48,7 +48,7 @@ const TimesheetGroupedRow = ({ group }) => {
                                 "font-bold px-2 py-0.5 rounded ml-4",
                                 Number(log.hours_worked) === 0 ? "text-amber-600 bg-amber-50" : "text-blue-600 bg-blue-50"
                             )}>
-                                {log.hours_worked}h
+                                {Number(log.hours_worked).toFixed(2)}h
                             </span>
                         </div>
                     ))}
@@ -597,7 +597,7 @@ const Timesheets = () => {
                                                 acc[groupId] = { ...log, id: groupId, entry_dates: [new Date(log.date)], total_hours: Number(log.hours_worked), logs: [log] };
                                             } else {
                                                 acc[groupId].entry_dates.push(new Date(log.date));
-                                                acc[groupId].total_hours += Number(log.hours_worked);
+                                                acc[groupId].total_hours = Number((acc[groupId].total_hours + Number(log.hours_worked)).toFixed(2));
                                                 acc[groupId].logs.push(log);
                                             }
                                             return acc;
