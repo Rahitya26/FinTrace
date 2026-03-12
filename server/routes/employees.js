@@ -146,10 +146,11 @@ router.get('/:id/performance', async (req, res) => {
             SELECT 
                 EXTRACT(YEAR FROM t.date) as year,
                 EXTRACT(MONTH FROM t.date) as month,
-                SUM(t.hours_worked * e.usd_hourly_rate * a.usd_to_inr_rate) as total_revenue
+                SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * a.usd_to_inr_rate) as total_revenue
             FROM timesheet_logs t
             JOIN timesheet_approvals a ON t.approval_id = a.id
             JOIN employees e ON t.employee_id = e.id
+            LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
             WHERE t.employee_id = $1 
               AND t.date >= $2
               AND t.approval_id IS NOT NULL
@@ -252,7 +253,7 @@ router.get('/allocations/:projectId', async (req, res) => {
 
 // POST /api/employees/allocations
 router.post('/allocations', async (req, res) => {
-    const { projectId, employeeId, allocationPercentage, startDate } = req.body;
+    const { projectId, employeeId, allocationPercentage, startDate, usdRate } = req.body;
     try {
         // Check if allocation already exists for this employee on this project
         const existing = await db.query(
@@ -263,16 +264,16 @@ router.post('/allocations', async (req, res) => {
         if (existing.rows.length > 0) {
             // Update existing
             const result = await db.query(
-                'UPDATE project_resource_plans SET allocation_percentage = $1, start_date = $2 WHERE id = $3 RETURNING *',
-                [allocationPercentage, startDate || new Date(), existing.rows[0].id]
+                'UPDATE project_resource_plans SET allocation_percentage = $1, start_date = $2, usd_rate = $3 WHERE id = $4 RETURNING *',
+                [allocationPercentage, startDate || new Date(), usdRate, existing.rows[0].id]
             );
             return res.json(result.rows[0]);
         }
 
         // Create new
         const result = await db.query(
-            'INSERT INTO project_resource_plans (project_id, employee_id, allocation_percentage, start_date) VALUES ($1, $2, $3, $4) RETURNING *',
-            [projectId, employeeId, allocationPercentage, startDate || new Date()]
+            'INSERT INTO project_resource_plans (project_id, employee_id, allocation_percentage, start_date, usd_rate) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [projectId, employeeId, allocationPercentage, startDate || new Date(), usdRate]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {

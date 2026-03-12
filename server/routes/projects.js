@@ -14,11 +14,18 @@ router.get('/', async (req, res) => {
         const status = req.query.status;
         const startDate = req.query.startDate;
         const endDate = req.query.endDate;
+        const clientId = req.query.clientId;
 
         // 1. Build dynamic WHERE clause
         let whereClauses = [];
         let queryParams = [];
         let paramIndex = 1;
+
+        if (clientId) {
+            whereClauses.push(`p.client_id = $${paramIndex}`);
+            queryParams.push(clientId);
+            paramIndex++;
+        }
 
         if (search) {
             whereClauses.push(`(p.name ILIKE $${paramIndex} OR c.name ILIKE $${paramIndex})`);

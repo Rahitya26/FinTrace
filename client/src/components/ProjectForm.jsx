@@ -359,7 +359,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                             <Calculator className="w-5 h-5 flex-shrink-0" />
                             <p>
                                 {formData.type === 'T&M'
-                                    ? <span>Revenue is calculated as: <strong>Working Days (Mon-Fri) × 8 hrs × Hourly Rate</strong>.</span>
+                                    ? <span>Revenue is calculated as: <strong>176 hrs × Billable Rate ($) × FX Rate (83.15)</strong>.</span>
                                     : <span>Resource costs are calculated as: <strong>Salary × Allocation % × Duration</strong>.</span>
                                 }
                             </p>
@@ -552,7 +552,8 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                         const emp = employees.find(e => e.id === Number(r.employeeId));
                         if (emp) {
                             monthlyCost += (Number(emp.monthly_salary) || 0) * (Number(r.allocation) / 100);
-                            monthlyBilling += (Number(emp.hourly_rate) || 0) * 160; // Approximate monthly billing at 20 business days x 8
+                            const effectiveUsdRate = Number(r.usdRate || emp.usd_hourly_rate || 0);
+                            monthlyBilling += (effectiveUsdRate * 176 * 83.15);
                         }
                     });
                     return (

@@ -3,7 +3,7 @@ import { format, subDays } from 'date-fns';
 import { toast } from 'sonner';
 import { Clock, Plus, Calendar, Save, Coffee, Lock, ChevronDown, ChevronRight, Search, X } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { getEmployees, getProjects, getTimesheets, logTimesheet, getClients, getClientResources } from '../lib/api';
+import { getEmployees, getProjects, getTimesheets, logTimesheet, getClients, getProjectResources } from '../lib/api';
 
 const TimesheetGroupedRow = ({ group }) => {
     const [isExpanded, setIsExpanded] = useState(false);
@@ -62,9 +62,10 @@ const Timesheets = () => {
     const [employees, setEmployees] = useState([]); // Project-specific employees
     const [allEmployees, setAllEmployees] = useState([]); // All active employees for filtering
     const [clients, setClients] = useState([]);
-    const [projects, setProjects] = useState([]);
     const [logs, setLogs] = useState([]);
+    const [clientProjects, setClientProjects] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [isLoadingProjects, setIsLoadingProjects] = useState(false);
 
     // Dropdown state
     const [employeeSearch, setEmployeeSearch] = useState('');
@@ -125,37 +126,71 @@ const Timesheets = () => {
 
     const fetchInitialData = async () => {
         try {
-            const [empsRes, projsRes, clientsRes] = await Promise.all([
+            const [empsRes, clientsRes] = await Promise.all([
                 getEmployees(),
-                getProjects({ limit: 100 }),
                 getClients()
             ]);
             setAllEmployees(empsRes.data.filter(e => e.status === 'Active'));
-            setProjects(projsRes.data.data.filter(p => p.status === 'Active' || p.status === 'Pipeline'));
             setClients(clientsRes.data);
         } catch (error) {
             toast.error("Failed to load generic data");
         }
     };
 
-    // Watch for client selection to fetch assigned resources
+    // Watch for client selection to fetch projects
     useEffect(() => {
         if (formData.client_id) {
-            fetchClientEmployees(formData.client_id);
-            // Optionally reset project/employee when client changes
-            setFormData(prev => ({ ...prev, project_id: '', employee_id: '' }));
+            fetchClientProjects(formData.client_id);
         } else {
+            setClientProjects([]);
             setEmployees([]);
             setFormData(prev => ({ ...prev, project_id: '', employee_id: '' }));
         }
     }, [formData.client_id]);
 
-    const fetchClientEmployees = async (clientId) => {
+    // Watch for project selection to fetch assigned resources
+    useEffect(() => {
+        setEmployees([]); // BUG A FIX: Reset immediately
+        setFormData(prev => ({ ...prev, employee_id: '' }));
+
+        if (formData.project_id) {
+            fetchProjectEmployees(formData.project_id);
+        }
+    }, [formData.project_id]);
+
+    const fetchClientProjects = async (clientId) => {
+        setIsLoadingProjects(true);
         try {
-            const res = await getClientResources(clientId);
-            setEmployees(res.data || []);
+            const res = await getProjects({ clientId, limit: 100 });
+            const activeProjects = res.data.data.filter(p => p.status === 'Active' || p.status === 'Pipeline');
+            setClientProjects(activeProjects);
+            
+            // Auto-select if only one project
+            if (activeProjects.length === 1) {
+                setFormData(prev => ({ ...prev, project_id: activeProjects[0].id.toString() }));
+            } else {
+                setFormData(prev => ({ ...prev, project_id: '' }));
+            }
         } catch (error) {
-            toast.error("Failed to fetch assigned employees for client");
+            toast.error("Failed to fetch projects for client");
+        } finally {
+            setIsLoadingProjects(false);
+        }
+    };
+
+    const fetchProjectEmployees = async (projectId) => {
+        if (!projectId) return;
+        try {
+            const res = await getProjectResources(projectId);
+            const formatted = res.data.map(r => ({
+                ...r,
+                id: Number(r.employee_id),
+                name: r.name
+            }));
+            setEmployees(formatted);
+        } catch (error) {
+            console.error("Fetch error details:", error);
+            toast.error("Failed to fetch assigned employees for project");
         }
     };
 
@@ -208,7 +243,7 @@ const Timesheets = () => {
     );
 
     const toggleDropdown = () => {
-        if (!formData.client_id || employees.length === 0) return;
+        if (!formData.project_id || employees.length === 0) return;
         setIsDropdownOpen(!isDropdownOpen);
         if (!isDropdownOpen) setEmployeeSearch('');
     };
@@ -219,13 +254,14 @@ const Timesheets = () => {
     };
 
     const selectEmployee = (emp) => {
-        setFormData({ ...formData, employee_id: emp.id, project_id: emp.project_id });
+        setFormData({ ...formData, employee_id: emp.id });
         setEmployeeSearch('');
         setIsDropdownOpen(false);
     };
 
     const getSelectedEmployeeName = () => {
         if (!formData.employee_id) return '';
+        // Use loose equality or cast to Number for robustness
         const emp = employees.find(e => Number(e.id) === Number(formData.employee_id));
         return emp ? emp.name : '';
     };
@@ -364,7 +400,24 @@ const Timesheets = () => {
                                 </select>
                             </div>
 
-                            {/* Project Dropdown Removed - Auto Resolved via Employee Selection */}
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Project</label>
+                                <select
+                                    className={cn(
+                                        "w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white",
+                                        !formData.client_id ? "opacity-50 cursor-not-allowed" : ""
+                                    )}
+                                    value={formData.project_id}
+                                    onChange={(e) => setFormData({ ...formData, project_id: e.target.value })}
+                                    required
+                                    disabled={!formData.client_id || isLoadingProjects}
+                                >
+                                    <option value="">{isLoadingProjects ? "Loading projects..." : "Select project..."}</option>
+                                    {clientProjects.map(project => (
+                                        <option key={project.id} value={project.id}>{project.name}</option>
+                                    ))}
+                                </select>
+                            </div>
 
                             <div className="relative" ref={dropdownRef}>
                                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Employee</label>
@@ -380,7 +433,7 @@ const Timesheets = () => {
                                     tabIndex={0}
                                 >
                                     <span className="truncate">
-                                        {getSelectedEmployeeName() || (formData.client_id ? (employees.length ? "Select your name..." : "No employees assigned to client") : "Select client first...")}
+                                        {getSelectedEmployeeName() || (formData.project_id ? (employees.length ? "Select your name..." : "No employees assigned to project") : "Select project first...")}
                                     </span>
                                     <div className="flex items-center gap-2">
                                         {formData.employee_id && (

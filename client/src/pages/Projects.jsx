@@ -575,7 +575,8 @@ const Projects = () => {
                                 projectId: response.data.id || projectData.id,
                                 employeeId: resource.employeeId,
                                 allocationPercentage: resource.allocation,
-                                startDate: resource.startDate || projectData.startDate
+                                startDate: resource.startDate || projectData.startDate,
+                                usdRate: resource.usdRate
                             }).then(newAllocRes => {
                                 // If they added and then immediately off-boarded a new resource before saving
                                 if (resource.endDate && newAllocRes.data && newAllocRes.data.id) {
@@ -592,13 +593,8 @@ const Projects = () => {
                 }
             }
 
-            // Optimistically add client name to avoid refetch
-            const client = clients.find(c => c.id == projectData.clientId);
-            const newProject = {
-                ...response.data,
-                client_name: client ? client.name : 'Unknown'
-            };
-            setProjects([newProject, ...projects]);
+            // Trigger full refresh to get calculated financials and updated resources
+            await fetchData();
             setIsModalOpen(false);
             toast.success('Project created successfully');
         } catch (err) {
