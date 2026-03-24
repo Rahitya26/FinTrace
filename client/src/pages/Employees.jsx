@@ -6,6 +6,7 @@ import Modal from '../components/Modal';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { cn, formatCurrency } from '../lib/utils';
 import { getEmployees, createEmployee, updateEmployee, deleteEmployee, offboardAllocation, getEmployeePerformance } from '../lib/api';
+import EmployeePerformanceModal from '../components/EmployeePerformanceModal';
 
 const Employees = () => {
     const [employees, setEmployees] = useState([]);
@@ -63,19 +64,10 @@ const Employees = () => {
     const [isPerformanceLoading, setIsPerformanceLoading] = useState(false);
     const [selectedEmployeeName, setSelectedEmployeeName] = useState('');
 
-    const openPerformanceModal = async (employee) => {
-        setIsPerformanceModalOpen(true);
+    const openPerformanceModal = (employee) => {
+        setCurrentEmployee(employee);
         setSelectedEmployeeName(employee.name);
-        setIsPerformanceLoading(true);
-        setPerformanceData(null);
-        try {
-            const res = await getEmployeePerformance(employee.id);
-            setPerformanceData(res.data);
-        } catch (error) {
-            toast.error("Failed to load performance data");
-        } finally {
-            setIsPerformanceLoading(false);
-        }
+        setIsPerformanceModalOpen(true);
     };
 
     // Removed redundant useEffect to prevent race conditions
@@ -322,10 +314,23 @@ const Employees = () => {
                                                     Offboarded
                                                 </span>
                                             ) : (
-                                                <span className={cn(
-                                                    "flex-shrink-0 inline-block w-2.5 h-2.5 rounded-full",
-                                                    employee.status === 'Active' ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : "bg-slate-300"
-                                                )} title={employee.status} />
+                                                <div className="flex flex-col gap-1.5">
+                                                    <span className={cn(
+                                                        "flex-shrink-0 inline-block w-2.5 h-2.5 rounded-full",
+                                                        employee.status === 'Active' ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" : "bg-slate-300"
+                                                    )} title={employee.status} />
+                                                    
+                                                    {employee.asset_status && (
+                                                        <span className={cn(
+                                                            "px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border",
+                                                            employee.status_color === 'green' && "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+                                                            employee.status_color === 'yellow' && "bg-amber-500/10 text-amber-500 border-amber-500/20",
+                                                            employee.status_color === 'red' && "bg-red-500/10 text-red-500 border-red-500/20"
+                                                        )}>
+                                                            {employee.asset_status}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             )}
                                             {/* Specialization / Rate Display */}
                                             <div className="flex flex-col items-start">
@@ -598,63 +603,14 @@ const Employees = () => {
             </Modal>
 
             {/* Performance Modal */}
-            <Modal
+            <EmployeePerformanceModal
                 isOpen={isPerformanceModalOpen}
                 onClose={() => setIsPerformanceModalOpen(false)}
-                title={`${selectedEmployeeName} - 6 Month Track Record`}
-            >
-                <div className="min-h-[300px] flex flex-col justify-center">
-                    {isPerformanceLoading ? (
-                        <div className="flex flex-col items-center text-slate-500">
-                            <div className="w-8 h-8 border-4 border-slate-200 border-t-primary rounded-full animate-spin mb-4"></div>
-                            <p>Loading performance data...</p>
-                        </div>
-                    ) : performanceData ? (
-                        <div className="space-y-6">
-                            <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
-                                <div>
-                                    <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">6-Month Profit Contribution</p>
-                                    <p className={cn(
-                                        "text-2xl font-bold mt-1",
-                                        performanceData.totalProfitContribution > 0 ? "text-emerald-600 dark:text-emerald-400" :
-                                            performanceData.totalProfitContribution < 0 ? "text-red-600 dark:text-red-400" :
-                                                "text-slate-700 dark:text-slate-300"
-                                    )}>
-                                        {performanceData.totalProfitContribution > 0 ? '+' : ''}
-                                        {formatCurrency(performanceData.totalProfitContribution)}
-                                    </p>
-                                </div>
-                                <div className="text-right">
-                                    <p className="text-sm text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">Monthly Salary</p>
-                                    <p className="text-lg font-semibold text-slate-700 dark:text-slate-300 mt-1">
-                                        {formatCurrency(performanceData.timeline[0]?.cost || 0)} <span className="text-xs font-normal text-slate-400">/mo</span>
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div className="h-64 w-full mt-4">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={performanceData.timeline} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
-                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-                                        <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#64748B' }} dy={10} />
-                                        <YAxis hide domain={['dataMin - 10000', 'dataMax + 10000']} />
-                                        <RechartsTooltip
-                                            formatter={(value) => formatCurrency(value)}
-                                            contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
-                                            itemStyle={{ fontSize: '14px', fontWeight: 500 }}
-                                            labelStyle={{ color: '#64748B', marginBottom: '4px' }}
-                                        />
-                                        <Line type="monotone" dataKey="revenue" name="T&M Revenue" stroke="#10B981" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} />
-                                        <Line type="stepAfter" dataKey="cost" name="Monthly Salary" stroke="#EF4444" strokeWidth={2} strokeDasharray="5 5" dot={false} />
-                                    </LineChart>
-                                </ResponsiveContainer>
-                            </div>
-                        </div>
-                    ) : (
-                        <p className="text-center text-slate-500">Failed to load data.</p>
-                    )}
-                </div>
-            </Modal>
+                employeeId={currentEmployee?.id}
+                employeeName={selectedEmployeeName}
+                startDate={new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]}
+                endDate={new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).toISOString().split('T')[0]}
+            />
         </div >
     );
 };

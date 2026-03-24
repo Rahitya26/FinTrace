@@ -4,7 +4,7 @@ import Modal from '../components/Modal';
 import ExpenseForm from '../components/ExpenseForm';
 import { getExpenses, createExpense } from '../lib/api';
 import { format } from 'date-fns';
-import { cn, formatCurrency } from '../lib/utils';
+import { cn, formatCurrency, getThisMonthRange, formatLocalDate } from '../lib/utils';
 
 const Expenses = () => {
     const [expenses, setExpenses] = useState([]);
@@ -113,9 +113,12 @@ const Expenses = () => {
                                         const now = new Date();
                                         let start, end = now;
 
-                                        if (preset.range === 'month') {
-                                            start = new Date(now.getFullYear(), now.getMonth(), 1);
-                                        } else if (preset.range === '30days') {
+                                    if (preset.range === 'month') {
+                                        const range = getThisMonthRange();
+                                        setDateRange(range);
+                                    } else {
+                                        let start, end = now;
+                                        if (preset.range === '30days') {
                                             start = new Date();
                                             start.setDate(now.getDate() - 30);
                                         } else if (preset.range === '6months') {
@@ -126,9 +129,10 @@ const Expenses = () => {
                                         }
 
                                         setDateRange({
-                                            startDate: start.toISOString().split('T')[0],
-                                            endDate: end.toISOString().split('T')[0]
+                                            startDate: formatLocalDate(start),
+                                            endDate: formatLocalDate(end)
                                         });
+                                    }
                                         setActivePreset(preset.range);
                                         setPage(1);
                                     }}

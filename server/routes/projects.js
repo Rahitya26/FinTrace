@@ -92,12 +92,12 @@ router.get('/', async (req, res) => {
 
         // 2. Fetch Resource Plans with Employee Details
         const plansQuery = `
-            SELECT prp.*, e.monthly_salary, e.hourly_rate, e.usd_hourly_rate as default_usd_rate, e.name 
+            SELECT prp.*, e.monthly_salary, e.hourly_rate, e.usd_hourly_rate as default_usd_rate, e.name as employee_name, e.role 
             FROM project_resource_plans prp
             JOIN employees e ON prp.employee_id = e.id
         `;
         const plansResult = await db.query(plansQuery);
-        const plans = plansResult.rows;
+        const plans = plansResult.rows.map(p => ({ ...p, name: p.employee_name })); // Ensure 'name' is available for calculations
 
         // 3. Fetch Unapproved Timesheet Logs for T&M Projections
         const unapprovedLogsQuery = `
@@ -147,18 +147,58 @@ router.get('/', async (req, res) => {
     }
 });
 
-// POST /api/projects - Create a new project
+// POST /api/projects - Create a new project with resources in a transaction
 router.post('/', async (req, res) => {
-    const { clientId, name, type, revenue, costs, startDate, deadline, status, usdRate } = req.body;
+    const { clientId, name, type, revenue, costs, startDate, deadline, status, billingType, fixedContractValue, resources, budgetedHours } = req.body;
+    
+    const client = await db.pool.connect();
+    
     try {
-        const result = await db.query(
-            'INSERT INTO projects (client_id, name, type, revenue_earned, employee_costs, start_date, deadline, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-            [clientId, name, type, revenue, costs, startDate || new Date(), deadline || null, status || 'Active']
+        await client.query('BEGIN');
+
+        // 1. Insert Project
+        const projectResult = await client.query(
+            `INSERT INTO projects (
+                client_id, name, type, revenue_earned, employee_costs, 
+                start_date, deadline, status, billing_type, fixed_contract_value, budgeted_hours
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+            [
+                clientId, name, type, revenue || 0, costs || 0, 
+                startDate || new Date().toISOString().split('T')[0], 
+                deadline || null, status || 'Active', billingType || 'T&M', 
+                fixedContractValue || 0, budgetedHours || 0
+            ]
         );
-        res.status(201).json(result.rows[0]);
+        
+        const newProject = projectResult.rows[0];
+
+        // 2. Insert Resources if present
+        if (resources && Array.isArray(resources) && resources.length > 0) {
+            for (const resource of resources) {
+                await client.query(
+                    `INSERT INTO project_resource_plans (
+                        project_id, employee_id, allocation_percentage, start_date, end_date, usd_rate
+                    ) VALUES ($1, $2, $3, $4, $5, $6)`,
+                    [
+                        newProject.id, 
+                        resource.employeeId, 
+                        resource.allocation || 100, 
+                        resource.startDate || newProject.start_date,
+                        resource.endDate || null,
+                        resource.usdRate || null
+                    ]
+                );
+            }
+        }
+
+        await client.query('COMMIT');
+        res.status(201).json(newProject);
     } catch (err) {
-        console.error(err);
+        await client.query('ROLLBACK');
+        console.error('Error creating project with resources:', err);
         res.status(500).json({ error: 'Internal server error' });
+    } finally {
+        client.release();
     }
 });
 

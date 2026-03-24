@@ -64,6 +64,7 @@ const Timesheets = () => {
     const [clients, setClients] = useState([]);
     const [logs, setLogs] = useState([]);
     const [clientProjects, setClientProjects] = useState([]);
+    const [selectedProjectStartDate, setSelectedProjectStartDate] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingProjects, setIsLoadingProjects] = useState(false);
 
@@ -127,12 +128,20 @@ const Timesheets = () => {
     const fetchInitialData = async () => {
         try {
             const [empsRes, clientsRes] = await Promise.all([
-                getEmployees(),
-                getClients()
+                getEmployees({ limit: 1000 }),
+                getClients({ limit: 1000 })
             ]);
-            setAllEmployees(empsRes.data.filter(e => e.status === 'Active'));
-            setClients(clientsRes.data);
+            
+            console.log('Clients fetched:', clientsRes.data);
+            
+            // Logic for robustness: handle both { data: [...] } and [...]
+            const empData = empsRes.data.data || empsRes.data || [];
+            const clientData = clientsRes.data.data || clientsRes.data || [];
+            
+            setAllEmployees(empData.filter(e => e.status === 'Active'));
+            setClients(clientData);
         } catch (error) {
+            console.error("Initial fetch error:", error);
             toast.error("Failed to load generic data");
         }
     };
@@ -148,28 +157,44 @@ const Timesheets = () => {
         }
     }, [formData.client_id]);
 
-    // Watch for project selection to fetch assigned resources
+    // Watch for project selection to fetch assigned resources and handle date validation
     useEffect(() => {
         setEmployees([]); // BUG A FIX: Reset immediately
         setFormData(prev => ({ ...prev, employee_id: '' }));
 
         if (formData.project_id) {
+            const project = clientProjects.find(p => p.id.toString() === formData.project_id.toString());
+            if (project) {
+                const startDate = project.start_date ? new Date(project.start_date).toISOString().split('T')[0] : '';
+                setSelectedProjectStartDate(startDate);
+
+                // Validation: If current selected date is before project start date, reset it
+                if (startDate && formData.startDate < startDate) {
+                    setFormData(prev => ({ 
+                        ...prev, 
+                        startDate: startDate, 
+                        endDate: startDate 
+                    }));
+                    toast.error(`Selected date is before this project's start date (${startDate}). Resetting to project start.`);
+                }
+            }
             fetchProjectEmployees(formData.project_id);
+        } else {
+            setSelectedProjectStartDate('');
         }
-    }, [formData.project_id]);
+    }, [formData.project_id, clientProjects]);
 
     const fetchClientProjects = async (clientId) => {
         setIsLoadingProjects(true);
         try {
-            const res = await getProjects({ clientId, limit: 100 });
-            const activeProjects = res.data.data.filter(p => p.status === 'Active' || p.status === 'Pipeline');
+            const res = await getProjects({ clientId, limit: 1000 });
+            const projectsArray = res.data.data || res.data || [];
+            const activeProjects = projectsArray.filter(p => p.status === 'Active' || p.status === 'Pipeline');
             setClientProjects(activeProjects);
             
             // Auto-select if only one project
             if (activeProjects.length === 1) {
                 setFormData(prev => ({ ...prev, project_id: activeProjects[0].id.toString() }));
-            } else {
-                setFormData(prev => ({ ...prev, project_id: '' }));
             }
         } catch (error) {
             toast.error("Failed to fetch projects for client");
@@ -182,7 +207,8 @@ const Timesheets = () => {
         if (!projectId) return;
         try {
             const res = await getProjectResources(projectId);
-            const formatted = res.data.map(r => ({
+            const resourcesArray = res.data.data || res.data || [];
+            const formatted = resourcesArray.map(r => ({
                 ...r,
                 id: Number(r.employee_id),
                 name: r.name
@@ -353,6 +379,7 @@ const Timesheets = () => {
                                     <input
                                         type="date"
                                         max={new Date().toISOString().split('T')[0]}
+                                        min={selectedProjectStartDate}
                                         className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white dark:[color-scheme:dark]"
                                         value={formData.startDate}
                                         onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
@@ -364,6 +391,7 @@ const Timesheets = () => {
                                     <input
                                         type="date"
                                         max={new Date().toISOString().split('T')[0]}
+                                        min={selectedProjectStartDate}
                                         className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white dark:[color-scheme:dark]"
                                         value={formData.endDate}
                                         onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}

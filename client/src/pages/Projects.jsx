@@ -7,8 +7,9 @@ import Modal from '../components/Modal';
 import ProjectForm from '../components/ProjectForm';
 import AssignResourceModal from '../components/AssignResourceModal';
 import { cn, formatCurrency } from '../lib/utils';
-import { getProjects, createProject, getClients, updateProjectStatus, deleteProject, addAllocation, getEmployeePerformance } from '../lib/api';
+import { getProjects, createProject, getClients, updateProjectStatus, deleteProject, addAllocation, getEmployeePerformance, offboardAllocation } from '../lib/api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
+import EmployeePerformanceModal from '../components/EmployeePerformanceModal';
 
 const PROCESS_COLORS = {
     'T&M': 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800',
@@ -84,7 +85,7 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
     const revenue = Number(project.revenue_earned) || 1; // Prevent div by zero
     const marginPct = (margin / revenue) * 100;
 
-    const isFixedBid = project.type === 'Fixed Bid' || project.type === 'Fixed Value';
+    const isFixedBid = project.billing_type === 'Fixed Bid';
     const isPastDeadline = isFixedBid && project.deadline && new Date() > new Date(project.deadline) && project.status !== 'Completed';
     const isHighRisk = isFixedBid && Number(project.employee_costs) > (revenue * 0.8);
 
@@ -137,8 +138,8 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
                                 High Risk
                             </div>
                         )}
-                        <div className={cn("px-2 py-1 text-xs font-semibold rounded-full border", PROCESS_COLORS[project.type])}>
-                            {project.type}
+                        <div className={cn("px-2 py-1 text-xs font-semibold rounded-full border", PROCESS_COLORS[project.billing_type === 'Fixed Bid' ? 'Fixed Bid' : 'T&M'])}>
+                            {project.billing_type || project.type}
                         </div>
                         <button
                             onClick={(e) => {
@@ -278,7 +279,7 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
                     <div className="space-y-3">
                         <div className="flex justify-between text-sm items-center">
                             <span className="text-slate-500 dark:text-slate-400 flex items-center">
-                                {project.type === 'T&M' ? 'Total Billed to Date' : 'Revenue'}
+                                {isFixedBid ? 'Fixed Revenue (INR)' : 'Total Billed to Date'}
                                 {project.type === 'T&M' && (() => {
                                     if (!project.debug_info?.plans?.length) return null;
                                     return (
@@ -340,7 +341,7 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
                                             </span>
                                             <div className="absolute bottom-full left-0 mb-2 w-max min-w-[240px] max-w-[320px] bg-slate-800 text-white text-xs rounded-lg py-2 px-3 opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl text-left font-medium">
                                                 <div className="mb-1.5 pb-1.5 border-b border-slate-700 text-[10px] text-slate-400 uppercase tracking-wider font-bold">
-                                                    {project.type === 'T&M' ? 'Contractor Payout (70% of Billing)' : 'Staff Breakdown'}
+                                                    {isFixedBid ? 'Revenue Contribution %' : (project.type === 'T&M' ? 'Contractor Payout (70% of Billing)' : 'Staff Breakdown')}
                                                 </div>
 
                                                 {/* Profit Generators */}
@@ -461,26 +462,19 @@ const Projects = () => {
     const [projectToDelete, setProjectToDelete] = useState(null);
     const [isDeleting, setIsDeleting] = useState(false);
     const [selectedTeamProject, setSelectedProjectTeam] = useState(null);
-
     // Performance Modal State
-    const [isPerformanceModalOpen, setIsPerformanceModalOpen] = useState(false);
-    const [performanceData, setPerformanceData] = useState(null);
-    const [isPerformanceLoading, setIsPerformanceLoading] = useState(false);
-    const [selectedEmployee, setSelectedEmployee] = useState(null);
+    const [performanceModal, setPerformanceModal] = useState({
+        isOpen: false,
+        employeeId: null,
+        employeeName: ''
+    });
 
-    const openPerformanceModal = async (employee) => {
-        setIsPerformanceModalOpen(true);
-        setSelectedEmployee(employee);
-        setIsPerformanceLoading(true);
-        setPerformanceData(null);
-        try {
-            const res = await getEmployeePerformance(employee.employee_id || employee.id);
-            setPerformanceData(res.data);
-        } catch (error) {
-            toast.error("Failed to load performance data");
-        } finally {
-            setIsPerformanceLoading(false);
-        }
+    const openPerformanceModal = (employee) => {
+        setPerformanceModal({
+            isOpen: true,
+            employeeId: employee.employee_id || employee.id,
+            employeeName: employee.name
+        });
     };
 
     useEffect(() => {
@@ -557,42 +551,9 @@ const Projects = () => {
     };
 
     const handleAddProject = async (projectData) => {
-        setIsLoading(true); // Re-use main loader or local state? Using main for simplicity or keep local.
-        // Actually ProjectForm has its own loader prop.
+        setIsLoading(true);
         try {
-            const response = await createProject(projectData);
-
-            // Handle Resources if present
-            if (projectData.resources && projectData.resources.length > 0) {
-                try {
-                    await Promise.all(projectData.resources.map(resource => {
-                        // If it has an ID, it's an existing mapped resource getting updated/offboarded
-                        if (resource.id && resource.endDate) {
-                            return offboardAllocation(resource.id, resource.endDate);
-                        } else if (!resource.id) {
-                            // It's a brand new resource
-                            return addAllocation({
-                                projectId: response.data.id || projectData.id,
-                                employeeId: resource.employeeId,
-                                allocationPercentage: resource.allocation,
-                                startDate: resource.startDate || projectData.startDate,
-                                usdRate: resource.usdRate
-                            }).then(newAllocRes => {
-                                // If they added and then immediately off-boarded a new resource before saving
-                                if (resource.endDate && newAllocRes.data && newAllocRes.data.id) {
-                                    return offboardAllocation(newAllocRes.data.id, resource.endDate);
-                                }
-                                return newAllocRes;
-                            });
-                        }
-                        return Promise.resolve(); // No change needed
-                    }));
-                } catch (resErr) {
-                    console.error("Failed to save resources", resErr);
-                    toast.error("Project created/updated but failed to save resources");
-                }
-            }
-
+            await createProject(projectData);
             // Trigger full refresh to get calculated financials and updated resources
             await fetchData();
             setIsModalOpen(false);
@@ -1161,107 +1122,14 @@ const Projects = () => {
                     </div>
                 </div>
             </Modal>
+            {/* Performance Modal */}
+            <EmployeePerformanceModal
+                isOpen={performanceModal.isOpen}
+                onClose={() => setPerformanceModal(prev => ({ ...prev, isOpen: false }))}
+                employeeId={performanceModal.employeeId}
+                employeeName={performanceModal.employeeName}
+            />
 
-            {/* Employee Performance Modal (Deep Linked) */}
-            <Modal
-                isOpen={isPerformanceModalOpen}
-                onClose={() => {
-                    setIsPerformanceModalOpen(false);
-                    // No need to reset selectedEmployee immediately if we want smooth transitions
-                }}
-                title={`${selectedEmployee?.name} - Performance Trends`}
-            >
-                <div className="min-h-[300px] flex flex-col justify-center">
-                    {isPerformanceLoading ? (
-                        <div className="flex flex-col items-center text-slate-500">
-                            <div className="w-8 h-8 border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin mb-4"></div>
-                            <p className="text-sm font-medium animate-pulse">Analyzing financial impact...</p>
-                        </div>
-                    ) : performanceData ? (
-                        <div className="space-y-6">
-                            <div className="flex items-center justify-between p-5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-inner">
-                                <div>
-                                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-black uppercase tracking-widest">Total Profit Contribution</p>
-                                    <p className={cn(
-                                        "text-3xl font-black mt-1",
-                                        performanceData.totalProfitContribution > 0 ? "text-emerald-600 dark:text-emerald-400" :
-                                            performanceData.totalProfitContribution < 0 ? "text-red-600 dark:text-red-400" :
-                                                "text-slate-700 dark:text-slate-300"
-                                    )}>
-                                        {performanceData.totalProfitContribution > 0 ? '+' : ''}
-                                        {formatCurrency(performanceData.totalProfitContribution)}
-                                    </p>
-                                </div>
-                                <div className="text-right">
-                                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-black uppercase tracking-widest">Monthly Salary</p>
-                                    <p className="text-xl font-black text-slate-800 dark:text-slate-200 mt-1">
-                                        {formatCurrency(performanceData.timeline[performanceData.timeline.length - 1]?.cost || 0)}
-                                    </p>
-                                    <p className="text-[9px] text-slate-400 font-bold uppercase mt-0.5">Base Baseline</p>
-                                </div>
-                            </div>
-
-                            <div className="h-64 w-full mt-4 bg-white dark:bg-slate-800/30 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={performanceData.timeline} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
-                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#CBD5E1" strokeOpacity={0.2} />
-                                        <XAxis
-                                            dataKey="month"
-                                            axisLine={false}
-                                            tickLine={false}
-                                            tick={{ fontSize: 10, fontWeight: 700, fill: '#94A3B8' }}
-                                            dy={10}
-                                        />
-                                        <YAxis hide domain={['dataMin - 5000', 'dataMax + 5000']} />
-                                        <RechartsTooltip
-                                            formatter={(value) => formatCurrency(value)}
-                                            contentStyle={{
-                                                borderRadius: '12px',
-                                                border: 'none',
-                                                boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)',
-                                                backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                                                backdropFilter: 'blur(4px)'
-                                            }}
-                                            itemStyle={{ fontSize: '12px', fontWeight: 800 }}
-                                            labelStyle={{ fontSize: '10px', fontWeight: 900, color: '#64748B', marginBottom: '8px', textTransform: 'uppercase' }}
-                                        />
-                                        <Line
-                                            type="monotone"
-                                            dataKey="revenue"
-                                            name="Billable Revenue"
-                                            stroke="#10B981"
-                                            strokeWidth={4}
-                                            dot={{ r: 4, strokeWidth: 3, stroke: '#10B981', fill: '#fff' }}
-                                            activeDot={{ r: 6, strokeWidth: 0 }}
-                                        />
-                                        <Line
-                                            type="stepAfter"
-                                            dataKey="cost"
-                                            name="Monthly Salary"
-                                            stroke="#EF4444"
-                                            strokeWidth={2}
-                                            strokeDasharray="6 6"
-                                            dot={false}
-                                        />
-                                    </LineChart>
-                                </ResponsiveContainer>
-                            </div>
-
-                            <button
-                                onClick={() => setIsPerformanceModalOpen(false)}
-                                className="w-full py-3 bg-slate-900 dark:bg-slate-700 text-white font-black uppercase tracking-widest text-xs rounded-xl hover:bg-slate-800 dark:hover:bg-slate-600 transition-all active:scale-[0.98]"
-                            >
-                                Back to Project Team
-                            </button>
-                        </div>
-                    ) : (
-                        <div className="text-center p-8">
-                            <AlertCircle className="w-10 h-10 text-slate-300 mx-auto mb-3" />
-                            <p className="text-sm text-slate-500 font-medium">No performance history found for this resource.</p>
-                        </div>
-                    )}
-                </div>
-            </Modal>
 
             <AssignResourceModal
                 isOpen={!!selectedProjectForResource}

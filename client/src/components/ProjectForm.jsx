@@ -16,14 +16,18 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
         clientId: '',
         name: '',
         type: 'T&M',
+        billingType: 'T&M',
+        fixedContractValue: '',
         revenue: '',
         startDate: new Date().toISOString().split('T')[0],
         deadline: '',
-        usdRate: ''
+        usdRate: '',
+        budgetedHours: 0
     });
 
     const [displayValues, setDisplayValues] = useState({
-        revenue: initialData?.revenue ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(initialData.revenue) : ''
+        revenue: initialData?.revenue ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(initialData.revenue) : '',
+        fixedContractValue: initialData?.fixed_contract_value ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(initialData.fixed_contract_value) : ''
     });
 
     // Resource Planner Data
@@ -40,9 +44,10 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
         // Fetch employees for dropdown
         const fetchEmps = async () => {
             try {
-                const res = await getEmployees();
+                const res = await getEmployees({ limit: 1000 }); // Fetch a larger set for the dropdown
+                const employeeData = Array.isArray(res.data) ? res.data : (res.data.data || []);
                 // Only active employees
-                setEmployees(res.data.filter(e => e.status === 'Active'));
+                setEmployees(employeeData.filter(e => e.status === 'Active'));
             } catch (err) {
                 console.error("Failed to load employees");
             }
@@ -53,10 +58,41 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
     const [margin, setMargin] = useState(0);
     const [calculatedCost, setCalculatedCost] = useState(0);
 
+    // Helper: Calculate Business Days (Mon-Fri)
+    const calculateBusinessDays = (start, end) => {
+        if (!start || !end) return 0;
+        let count = 0;
+        const curDate = new Date(start);
+        const endDate = new Date(end);
+        while (curDate <= endDate) {
+            const dayOfWeek = curDate.getDay();
+            if (dayOfWeek !== 0 && dayOfWeek !== 6) count++;
+            curDate.setDate(curDate.getDate() + 1);
+        }
+        return count;
+    };
+
+    // Auto-calculate Budgeted Hours for Fixed Bid
+    useEffect(() => {
+        if (formData.billingType === 'Fixed Bid' && formData.startDate && formData.deadline) {
+            const days = calculateBusinessDays(formData.startDate, formData.deadline);
+            setFormData(prev => ({ ...prev, budgetedHours: days * 8 }));
+        }
+    }, [formData.startDate, formData.deadline, formData.billingType]);
+
     // Calculate Margin & Sync Cost
     useEffect(() => {
+        const isTM = formData.billingType === 'T&M';
+        const isFixedBid = formData.billingType === 'Fixed Bid';
+        
         let totalCost = 0;
-        let totalRevenue = parseFloat(formData.revenue) || 0;
+        let totalRevenue = 0;
+
+        if (isFixedBid) {
+            totalRevenue = (parseFloat(formData.fixedContractValue) || 0) * 83.15;
+        } else {
+            totalRevenue = parseFloat(formData.revenue) || 0;
+        }
 
         if (resources.length > 0) {
             const today = new Date();
@@ -64,14 +100,15 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
             resources.forEach(r => {
                 const emp = employees.find(e => e.id === Number(r.employeeId));
                 const salary = emp ? Number(emp.monthly_salary) : 0;
-                const allocation = formData.type === 'T&M' ? 1 : (Number(r.allocation) / 100);
+                
+                // For Fixed Bid, allocation matters for cost. For T&M, we often ignore simplified allocation in this simulation
+                const allocation = (Number(r.allocation) || 100) / 100;
                 const monthlyBurn = salary * allocation;
 
                 const start = new Date(r.startDate || formData.startDate);
                 if (today <= start) return;
 
                 let calculationEndDate = new Date();
-
                 if (r.endDate) {
                     calculationEndDate = new Date(r.endDate);
                 } else if (formData.status === 'Completed' && formData.deadline) {
@@ -81,23 +118,20 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                 const diffTime = Math.max(0, calculationEndDate - start);
                 const durationMonths = diffTime / (1000 * 60 * 60 * 24 * 30.44);
 
-                if (formData.type === 'T&M') {
-                    // T&M costs and revenues are 0 until timesheets are approved.
-                    totalRevenue += 0;
-                    totalCost += 0;
+                if (isTM) {
+                    // T&M revenue projection for the UI simulation
+                    const usdRate = Number(r.usdRate) || 0;
+                    totalRevenue += (usdRate * 176 * 83.15 * durationMonths);
+                    totalCost += (monthlyBurn * durationMonths);
                 } else {
                     totalCost += (monthlyBurn * durationMonths);
                 }
             });
-
-            if (formData.type !== 'T&M') {
-                totalRevenue = parseFloat(formData.revenue) || 0;
-            }
         }
 
         setCalculatedCost(totalCost);
         setMargin(totalRevenue - totalCost);
-    }, [formData.revenue, formData.startDate, formData.deadline, formData.status, resources, employees, formData.type]);
+    }, [formData.revenue, formData.fixedContractValue, formData.billingType, formData.startDate, formData.deadline, formData.status, resources, employees, formData.type]);
 
     const selectEmployeeForResource = (empId) => {
         const emp = employees.find(e => e.id === Number(empId));
@@ -185,7 +219,16 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                 revenue: parseFloat(formData.revenue) || 0,
                 costs: finalCost,
                 margin,
-                resources: resources // Pass resources to parent
+                startDate: formData.startDate,
+                deadline: formData.deadline || null,
+                resources: resources.map(r => ({
+                    ...r,
+                    employeeId: Number(r.employeeId),
+                    allocation: Number(r.allocation),
+                    startDate: r.startDate || formData.startDate,
+                    endDate: r.endDate || null
+                })),
+                budgetedHours: formData.budgetedHours
             });
         } catch (err) {
             toast.error("Invalid form data");
@@ -258,36 +301,56 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Process Type</label>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Billing Type</label>
                             <div className="flex space-x-4">
-                                {PROCESS_TYPES.map(type => (
-                                    <label key={type} className="flex items-center space-x-2 cursor-pointer">
+                                {['T&M', 'Fixed Bid'].map(bType => (
+                                    <label key={bType} className="flex items-center space-x-2 cursor-pointer">
                                         <input
                                             type="radio"
-                                            name="type"
-                                            value={type}
-                                            checked={formData.type === type}
-                                            onChange={(e) => {
-                                                setFormData({ ...formData, type: e.target.value });
-                                                setResources([]); // Reset resources on type change
-                                                setNewResource({
-                                                    employeeId: '',
-                                                    allocation: e.target.value === 'T&M' ? 0 : 100,
-                                                    startDate: new Date().toISOString().split('T')[0]
-                                                });
-                                            }}
+                                            name="billingType"
+                                            value={bType}
+                                            checked={formData.billingType === bType}
+                                            onChange={(e) => setFormData({ ...formData, billingType: e.target.value })}
                                             className="text-primary focus:ring-primary"
                                         />
-                                        <span className="text-sm text-slate-700 dark:text-slate-300">{type}</span>
+                                        <span className="text-sm text-slate-700 dark:text-slate-300">{bType}</span>
                                     </label>
                                 ))}
                             </div>
-                            {formData.type === 'T&M' && (
-                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 italic">
-                                    For T&M, revenue is auto-calculated based on resource billing rates (₹/hr).
-                                </p>
-                            )}
                         </div>
+
+                        {formData.billingType === 'Fixed Bid' && (
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="fixedContractValue" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                        Total Contract Value ($)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        id="fixedContractValue"
+                                        required
+                                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                        value={displayValues.fixedContractValue}
+                                        onChange={(e) => handleCurrencyChange('fixedContractValue', e.target.value)}
+                                        placeholder="e.g. 10,000"
+                                    />
+                                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 italic">
+                                        Revenue will be calculated as contribution % of this value (in INR).
+                                    </p>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                        Budgeted Effort (Hours)
+                                    </label>
+                                    <div className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 font-mono">
+                                        {formData.budgetedHours} hrs
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-1 italic">
+                                        (Business Days × 8 hrs)
+                                    </p>
+                                </div>
+                            </div>
+                        )}
 
                         <div className="grid grid-cols-2 gap-4">
                             <div>
@@ -416,7 +479,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                     >
                                         <option value="">Select Employee...</option>
                                         {employees
-                                            .filter(e => !resources.some(r => Number(r.employeeId) === e.id)) // Filter out already assigned
+                                            .filter(e => !resources.some(r => Number(r.employeeId) === e.id))
                                             .filter(e => selectedRole === '' || e.role === selectedRole)
                                             .filter(e => e.name.toLowerCase().includes(empSearch.toLowerCase()) || e.role.toLowerCase().includes(empSearch.toLowerCase()))
                                             .map(e => (
@@ -428,36 +491,36 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                 </div>
                             </div>
 
-                            <div className="w-full sm:w-[20%]">
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                                    Billable Rate ($/hr)
-                                </label>
-                                <input
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                                    value={newResource.usdRate}
-                                    onChange={(e) => setNewResource({ ...newResource, usdRate: e.target.value })}
-                                    placeholder="Rate"
-                                />
-                            </div>
-
-                            {formData.type !== 'T&M' && (
-                                <div className="w-full sm:w-[15%]">
+                            {formData.billingType === 'T&M' && (
+                                <div className="w-full sm:w-[20%]">
                                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                                        Alloc. %
+                                        Billable Rate ($/hr)
                                     </label>
                                     <input
                                         type="number"
+                                        step="0.01"
                                         min="0"
-                                        max="100"
                                         className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                                        value={newResource.allocation}
-                                        onChange={(e) => setNewResource({ ...newResource, allocation: e.target.value })}
+                                        value={newResource.usdRate}
+                                        onChange={(e) => setNewResource({ ...newResource, usdRate: e.target.value })}
+                                        placeholder="Rate"
                                     />
                                 </div>
                             )}
+
+                            <div className="w-full sm:w-[15%]">
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                    Alloc. %
+                                </label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    max="100"
+                                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                    value={newResource.allocation}
+                                    onChange={(e) => setNewResource({ ...newResource, allocation: e.target.value })}
+                                />
+                            </div>
 
                             <div className="w-full sm:w-[15%] flex justify-end sm:justify-start">
                                 <button
@@ -479,8 +542,8 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                         <tr>
                                             <th className="px-4 py-2">Employee</th>
                                             <th className="px-4 py-2">Start Date</th>
-                                            <th className="px-4 py-2">Billable Rate ($)</th>
-                                            {formData.type !== 'T&M' && <th className="px-4 py-2">Allocation</th>}
+                                            {formData.billingType === 'T&M' && <th className="px-4 py-2">Billable Rate ($)</th>}
+                                            <th className="px-4 py-2">Allocation</th>
                                             <th className="px-4 py-2 text-right">Actions</th>
                                         </tr>
                                     </thead>
@@ -501,14 +564,14 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                                     <td className="px-4 py-2 text-slate-600 dark:text-slate-300">
                                                         {r.startDate ? format(new Date(r.startDate), 'dd MMM yyyy') : 'N/A'}
                                                     </td>
-                                                    <td className="px-4 py-2 text-slate-600 dark:text-slate-300 font-mono">
-                                                        ${Number(r.usdRate || 0).toFixed(2)}
-                                                    </td>
-                                                    {formData.type !== 'T&M' && (
-                                                        <td className="px-4 py-2 text-slate-600 dark:text-slate-300">
-                                                            {r.allocation}%
+                                                    {formData.billingType === 'T&M' && (
+                                                        <td className="px-4 py-2 text-slate-600 dark:text-slate-300 font-mono">
+                                                            ${Number(r.usdRate || 0).toFixed(2)}
                                                         </td>
                                                     )}
+                                                    <td className="px-4 py-2 text-slate-600 dark:text-slate-300">
+                                                        {r.allocation}%
+                                                    </td>
                                                     <td className="px-4 py-2 text-right">
                                                         {!r.endDate ? (
                                                             <button

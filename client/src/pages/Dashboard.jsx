@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { TrendingUp, TrendingDown, DollarSign, PieChart, Activity, Calendar, X } from 'lucide-react';
 import { getDashboardSummary, getDashboardAnalytics } from '../lib/api';
-import { cn, formatCurrency } from '../lib/utils';
+import { cn, formatCurrency, getThisMonthRange, formatLocalDate } from '../lib/utils';
+import EmployeePerformanceModal from '../components/EmployeePerformanceModal';
 import {
     LineChart,
     Line,
@@ -28,13 +29,20 @@ const Dashboard = () => {
         trend: [],
         expenses: []
     });
-    const [dateRange, setDateRange] = useState({
-        startDate: '',
-        endDate: ''
+    const [dateRange, setDateRange] = useState(() => {
+        return getThisMonthRange();
     });
-    const [activePreset, setActivePreset] = useState(null);
+    const [activePreset, setActivePreset] = useState('month');
     const [isLoading, setIsLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    
+    // Performance Modal State
+    const [performanceModal, setPerformanceModal] = useState({
+        isOpen: false,
+        employeeId: null,
+        employeeName: ''
+    });
+
     const navigate = useNavigate();
 
     // Theme colors
@@ -107,21 +115,25 @@ const Dashboard = () => {
                                     let start, end = now;
 
                                     if (preset.range === 'month') {
-                                        start = new Date(now.getFullYear(), now.getMonth(), 1);
-                                    } else if (preset.range === '30days') {
-                                        start = new Date();
-                                        start.setDate(now.getDate() - 30);
-                                    } else if (preset.range === '6months') {
-                                        start = new Date();
-                                        start.setMonth(now.getMonth() - 6);
-                                    } else if (preset.range === 'ytd') {
-                                        start = new Date(now.getFullYear(), 0, 1);
-                                    }
+                                        const range = getThisMonthRange();
+                                        setDateRange(range);
+                                    } else {
+                                        let start, end = now;
+                                        if (preset.range === '30days') {
+                                            start = new Date();
+                                            start.setDate(now.getDate() - 30);
+                                        } else if (preset.range === '6months') {
+                                            start = new Date();
+                                            start.setMonth(now.getMonth() - 6);
+                                        } else if (preset.range === 'ytd') {
+                                            start = new Date(now.getFullYear(), 0, 1);
+                                        }
 
-                                    setDateRange({
-                                        startDate: start.toISOString().split('T')[0],
-                                        endDate: end.toISOString().split('T')[0]
-                                    });
+                                        setDateRange({
+                                            startDate: formatLocalDate(start),
+                                            endDate: formatLocalDate(end)
+                                        });
+                                    }
                                     setActivePreset(preset.range);
                                 }}
                                 className={cn(
@@ -379,7 +391,15 @@ const Dashboard = () => {
                                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                                             {stats.processTypeBreakdown?.map((item) => (
                                                 <tr key={item.type} className="hover:bg-white/40 dark:hover:bg-white/5 transition-colors">
-                                                    <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{item.type}</td>
+                                                    <td 
+                                                        onClick={() => {
+                                                            setIsModalOpen(false);
+                                                            navigate(`/projects?type=${encodeURIComponent(item.type)}`);
+                                                        }}
+                                                        className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100 cursor-pointer hover:text-primary transition-colors"
+                                                    >
+                                                        {item.type}
+                                                    </td>
                                                     <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{formatCurrency(item.rev)}</td>
                                                     <td className="px-4 py-3 text-red-500 font-medium">{formatCurrency(item.cost)}</td>
                                                     <td className={cn(
@@ -390,10 +410,17 @@ const Dashboard = () => {
                                                     </td>
                                                 </tr>
                                             ))}
+                                            {/* Bench Cost Row */}
+                                            <tr className="bg-slate-50/50 dark:bg-slate-800/20 italic">
+                                                <td className="px-4 py-3 text-slate-500 dark:text-slate-400">Bench / Unallocated Time</td>
+                                                <td className="px-4 py-3 text-slate-400">-</td>
+                                                <td className="px-4 py-3 text-red-400">{formatCurrency(stats.totalBenchCost || 0)}</td>
+                                                <td className="px-4 py-3 text-red-400">-{formatCurrency(stats.totalBenchCost || 0)}</td>
+                                            </tr>
                                         </tbody>
                                         <tfoot>
                                             <tr className="bg-slate-100/30 dark:bg-slate-800/30 font-bold border-t border-slate-200 dark:border-slate-700">
-                                                <td className="px-4 py-3 text-slate-900 dark:text-white">TOTAL</td>
+                                                <td className="px-4 py-3 text-slate-900 dark:text-white">TOTAL STAFF COST</td>
                                                 <td className="px-4 py-3 text-slate-900 dark:text-white">{formatCurrency(stats.totalRevenue)}</td>
                                                 <td className="px-4 py-3 text-red-500">{formatCurrency(stats.totalProjectCosts)}</td>
                                                 <td className="px-4 py-3 text-emerald-500">{formatCurrency(stats.totalRevenue - stats.totalProjectCosts)}</td>
@@ -408,24 +435,59 @@ const Dashboard = () => {
                                 <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
                                     <Activity className="w-4 h-4 mr-2" /> Employee Cost Breakdown (Month)
                                 </h3>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {(stats.employeeCostList || []).map((emp) => (
-                                        <div key={emp.id} className="p-4 bg-white dark:bg-slate-700/30 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-between hover:border-primary/30 transition-all group">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-lg">
-                                                    {emp.name.charAt(0)}
+                                <div className="grid grid-cols-1 gap-4">
+                                    {(stats.employeeCostList || []).map((emp) => {
+                                        const r = emp.revenueGenerated || 0;
+                                        const s = emp.monthlySalary || 0;
+                                        const hasActivity = emp.totalCost > 0;
+                                        
+                                        let statusColor = "text-slate-900 dark:text-white";
+                                        let bgColor = "bg-white dark:bg-slate-700/30";
+                                        
+                                        if (!hasActivity) {
+                                            statusColor = "text-red-500";
+                                        } else if (r > s) {
+                                            statusColor = "text-emerald-500";
+                                        } else if (r === s) {
+                                            statusColor = "text-amber-500";
+                                        } else {
+                                            statusColor = "text-red-500";
+                                        }
+
+                                        return (
+                                            <div 
+                                                key={emp.id} 
+                                                onClick={() => setPerformanceModal({ isOpen: true, employeeId: emp.id, employeeName: emp.name })}
+                                                className={cn(
+                                                    "p-4 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-between hover:border-primary/50 hover:shadow-md transition-all group cursor-pointer",
+                                                    bgColor
+                                                )}
+                                            >
+                                                <div className="flex items-center gap-4 flex-1">
+                                                    <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-xl group-hover:bg-primary group-hover:text-white transition-all">
+                                                        {emp.name.charAt(0)}
+                                                    </div>
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="font-bold text-lg text-slate-900 dark:text-white group-hover:text-primary transition-colors truncate">{emp.name}</p>
+                                                        <p className="text-sm text-slate-500 dark:text-slate-400">{emp.role || 'Team Member'}</p>
+                                                    </div>
                                                 </div>
-                                                <div>
-                                                    <p className="font-semibold text-slate-900 dark:text-white group-hover:text-primary transition-colors">{emp.name}</p>
-                                                    <p className="text-xs text-slate-500 dark:text-slate-400">{emp.role || 'Team Member'}</p>
+
+                                                <div className="flex items-center gap-12">
+                                                    <div className="text-right">
+                                                        <p className="text-xs text-slate-400 uppercase font-medium">Monthly Salary</p>
+                                                        <p className="font-semibold text-slate-600 dark:text-slate-300 tabular-nums">{formatCurrency(s)}</p>
+                                                    </div>
+                                                    <div className="text-right min-w-[180px]">
+                                                        <p className="text-xs text-slate-400 uppercase font-medium">Monthly Revenue Generated</p>
+                                                        <p className={cn("text-xl font-black tabular-nums", statusColor)}>
+                                                            {formatCurrency(r)}
+                                                        </p>
+                                                    </div>
                                                 </div>
                                             </div>
-                                            <div className="text-right">
-                                                <p className="font-bold text-slate-900 dark:text-white">{formatCurrency(emp.totalCost)}</p>
-                                                <p className="text-[10px] text-slate-400 uppercase">Monthly Consumption</p>
-                                            </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             </section>
                         </div>
@@ -442,6 +504,16 @@ const Dashboard = () => {
                     </div>
                 </div>
             )}
+
+            {/* Performance Modal */}
+            <EmployeePerformanceModal
+                isOpen={performanceModal.isOpen}
+                onClose={() => setPerformanceModal(prev => ({ ...prev, isOpen: false }))}
+                employeeId={performanceModal.employeeId}
+                employeeName={performanceModal.employeeName}
+                startDate={dateRange.startDate}
+                endDate={dateRange.endDate}
+            />
         </div>
     );
 };

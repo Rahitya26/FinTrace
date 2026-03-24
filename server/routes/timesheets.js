@@ -34,9 +34,12 @@ router.post('/log', async (req, res) => {
             return res.status(400).json({ error: 'Cannot log time for future dates.' });
         }
 
-        // 2. Financial Guardrail: Check resource plan end_date
+        // 2. Financial Guardrail: Check resource plan and project start date
         const planRes = await client.query(
-            'SELECT end_date FROM project_resource_plans WHERE employee_id = $1 AND project_id = $2',
+            `SELECT prp.end_date, prp.start_date as assignment_start, p.start_date as project_start 
+             FROM project_resource_plans prp 
+             JOIN projects p ON prp.project_id = p.id
+             WHERE prp.employee_id = $1 AND prp.project_id = $2`,
             [employee_id, project_id]
         );
 
@@ -44,7 +47,13 @@ router.post('/log', async (req, res) => {
             return res.status(400).json({ error: 'No active resource plan found for this employee on this project.' });
         }
 
+        const projectStartDate = new Date(planRes.rows[0].project_start).toISOString().split('T')[0];
         const planEndDate = planRes.rows[0].end_date ? new Date(planRes.rows[0].end_date).toISOString().split('T')[0] : null;
+
+        if (startDate < projectStartDate) {
+            return res.status(400).json({ error: `Cannot log time before project start date (${projectStartDate}).` });
+        }
+
         if (planEndDate && endDate > planEndDate) {
             return res.status(400).json({ error: `Cannot log time past offboarding date (${planEndDate}).` });
         }

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const { calculateProjectFinancials } = require('../utils/projectCalculation');
+const { getActiveMonthsForEmployee, toLocalDate, getMonthsInPeriod } = require('../utils/financialUtils');
 
 // GET /api/dashboard/summary
 router.get('/summary', async (req, res) => {
@@ -13,87 +14,125 @@ router.get('/summary', async (req, res) => {
   const queryParams = [];
 
   if (startDate && endDate) {
+    const start = `${startDate}T00:00:00`;
+    const end = `${endDate}T23:59:59`;
     projectsWhere = 'WHERE start_date <= $2 AND (deadline >= $1 OR deadline IS NULL)';
     expensesWhere = 'WHERE date >= $1 AND date <= $2';
-    queryParams.push(startDate, endDate);
+    queryParams.push(start, end);
   }
 
   try {
-    // Fetch all applicable projects
+    // 1. Fetch all applicable projects
     const projectsQuery = `SELECT * FROM projects ${projectsWhere}`;
     const projectsResult = await db.query(projectsQuery, queryParams);
+    const projects = projectsResult.rows;
 
-    // Fetch related resource plans including employee specifics
+    // 2. Fetch all active employees to initialize the map
+    const allActiveEmployees = await db.query("SELECT id, name, role, monthly_salary FROM employees WHERE status = 'Active'");
+    const employeeCostMap = {};
+    allActiveEmployees.rows.forEach(emp => {
+      employeeCostMap[emp.id] = {
+        id: emp.id,
+        name: emp.name,
+        role: emp.role,
+        totalCost: 0,
+        revenueGenerated: 0,
+        monthlySalary: Math.round(Number(emp.monthly_salary) || 0)
+      };
+    });
+
+    // 3. Fetch all resource plans for these employees
     const plansQuery = `
-        SELECT prp.*, e.monthly_salary, e.hourly_rate, e.name 
+        SELECT prp.*, e.monthly_salary, e.hourly_rate, e.name, e.role 
         FROM project_resource_plans prp
         JOIN employees e ON prp.employee_id = e.id
     `;
     const plansResult = await db.query(plansQuery);
+    const allPlans = plansResult.rows;
 
-    // 3. Fetch Unapproved Timesheet Logs for T&M Projections
+    // 4. Fetch Timesheet Logs (Approved and Unapproved)
+    let logsWhere = '';
+    const logsParams = [];
+    if (startDate && endDate) {
+        logsWhere = 'WHERE t.date >= $1 AND t.date <= $2';
+        logsParams.push(startDate, endDate);
+    }
+
     const unapprovedLogsQuery = `
         SELECT t.project_id, t.employee_id, t.hours_worked, e.usd_hourly_rate, e.hourly_rate as inr_hourly_rate
         FROM timesheet_logs t
         JOIN employees e ON t.employee_id = e.id
-        WHERE t.approval_id IS NULL
+        ${logsWhere} AND t.approval_id IS NULL
     `;
-    const unapprovedLogsResult = await db.query(unapprovedLogsQuery);
+    const unapprovedLogsResult = await db.query(unapprovedLogsQuery, logsParams);
     const unapprovedLogs = unapprovedLogsResult.rows;
 
-    // 4. Fetch Approved Timesheet Aggregates for Dashboard
+    // IMPORTANT: Aggregated approved logs for calculateProjectFinancials
     const approvedLogsQuery = `
         SELECT 
             t.project_id, 
             t.employee_id, 
             SUM(t.hours_worked) as total_hours,
-            SUM(t.hours_worked * e.hourly_rate) as total_inr_cost,
-            SUM(t.hours_worked * e.usd_hourly_rate * ta.usd_to_inr_rate) as total_inr_revenue
+            SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as total_inr_revenue
         FROM timesheet_logs t
         JOIN employees e ON t.employee_id = e.id
         JOIN timesheet_approvals ta ON t.approval_id = ta.id
+        LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
+        ${logsWhere}
         GROUP BY t.project_id, t.employee_id
     `;
-    const approvedLogsResult = await db.query(approvedLogsQuery);
+    const approvedLogsResult = await db.query(approvedLogsQuery, logsParams);
     const approvedLogs = approvedLogsResult.rows;
 
+    const historicalTotalQuery = `
+        SELECT t.project_id, t.employee_id, SUM(t.hours_worked) as total_hours
+        FROM timesheet_logs t
+        GROUP BY t.project_id, t.employee_id
+    `;
+    const historyResult = await db.query(historicalTotalQuery);
+    const historyLogs = historyResult.rows;
+
+    // 5. Aggregate Financials
     let totalRevenue = 0;
     let totalProjectCosts = 0;
     const processTypeBreakdownMap = {
-      'T&M': { rev: 0, cost: 0, margin: 0, count: 0 },
-      'Fixed Bid': { rev: 0, cost: 0, margin: 0, count: 0 },
-      'Fixed Value': { rev: 0, cost: 0, margin: 0, count: 0 }
+      'T&M': { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 },
+      'Fixed Bid': { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 },
+      'Fixed Value': { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 }
     };
 
-    const employeeCostMap = {};
+    const employeeAllocationMap = {}; // To track total allocation per employee
 
-    projectsResult.rows.forEach(project => {
-      const calculated = calculateProjectFinancials(project, plansResult.rows, unapprovedLogs, approvedLogs);
+    projects.forEach(project => {
+      const calculated = calculateProjectFinancials(project, allPlans, unapprovedLogs, approvedLogs, historyLogs, startDate, endDate);
+      
       const rev = Number(calculated.revenue_earned) || 0;
       const cost = Number(calculated.employee_costs) || 0;
-      const margin = rev - cost;
-
+      
       totalRevenue += rev;
       totalProjectCosts += cost;
-      const projectedRev = Number(calculated.projectedRevenue) || 0;
 
-      const type = project.type || 'Fixed Bid';
+      const type = project.billing_type || project.type || 'T&M';
       if (!processTypeBreakdownMap[type]) {
         processTypeBreakdownMap[type] = { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 };
       }
       processTypeBreakdownMap[type].count += 1;
       processTypeBreakdownMap[type].rev += rev;
       processTypeBreakdownMap[type].cost += cost;
-      processTypeBreakdownMap[type].margin += margin;
-      processTypeBreakdownMap[type].projectedRev += projectedRev;
+      processTypeBreakdownMap[type].margin += (rev - cost);
+      processTypeBreakdownMap[type].projectedRev += (Number(calculated.projectedRevenue) || 0);
 
-      // Track individual employee costs from enhanced plans (Calculated monthly burn or approved cost)
       if (calculated.debug_info?.plans) {
         calculated.debug_info.plans.forEach(plan => {
-          if (!employeeCostMap[plan.employee_id]) {
-            employeeCostMap[plan.employee_id] = { id: plan.employee_id, name: plan.name, role: plan.role, totalCost: 0 };
+          if (employeeCostMap[plan.employee_id]) {
+            employeeCostMap[plan.employee_id].totalCost += plan.totalPlanCost || 0;
+            employeeCostMap[plan.employee_id].revenueGenerated += plan.totalPlanRevenue || 0;
+            employeeCostMap[plan.employee_id].asset_status = plan.asset_status;
+            employeeCostMap[plan.employee_id].status_color = plan.status_color;
+            
+            // Track allocation for bench calculation
+            employeeAllocationMap[plan.employee_id] = (employeeAllocationMap[plan.employee_id] || 0) + (Number(plan.allocation_percentage) || 0);
           }
-          employeeCostMap[plan.employee_id].totalCost += plan.totalPlanCost || 0;
         });
       }
     });
@@ -105,18 +144,33 @@ router.get('/summary', async (req, res) => {
 
     const employeeCostList = Object.values(employeeCostMap).sort((a, b) => b.totalCost - a.totalCost);
 
-    // 2. Total Company Expenses
-    const expensesQuery = `SELECT SUM(amount) as total_expenses FROM company_expenses ${expensesWhere}`;
-    const expensesResult = await db.query(expensesQuery, queryParams);
-    const { total_expenses } = expensesResult.rows[0] || {};
+    // 6. Calculate Total Payroll for ALL Active Employees in this period
+    const monthsMultiplier = getMonthsInPeriod(startDate, endDate);
+    let totalPayrollCost = 0;
+    allActiveEmployees.rows.forEach(emp => {
+        totalPayrollCost += (Number(emp.monthly_salary) || 0) * monthsMultiplier;
+    });
+
+    // 7. Bench Cost is now simply the unallocated portion of the payroll
+    const totalBenchCost = Math.max(0, totalPayrollCost - totalProjectCosts);
+
+    // 8. Company Expenses
+    const expensesResult = await db.query(`SELECT SUM(amount) as total_expenses FROM company_expenses ${expensesWhere}`, queryParams);
+    const totalExpensesValue = Number(expensesResult.rows[0]?.total_expenses) || 0;
+
+    const finalStaffCost = totalPayrollCost;
 
     res.json({
-      totalRevenue: parseFloat(totalRevenue || 0),
-      totalProjectCosts: parseFloat(totalProjectCosts || 0),
-      totalCompanyExpenses: parseFloat(total_expenses || 0),
+      startDate: startDate || null,
+      endDate: endDate || null,
+      totalRevenue: Math.round(totalRevenue),
+      totalProjectCosts: Math.round(finalStaffCost),
+      totalBenchCost: Math.round(totalBenchCost),
+      totalCompanyExpenses: Math.round(totalExpensesValue),
       processTypeBreakdown,
       employeeCostList
     });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -126,8 +180,6 @@ router.get('/summary', async (req, res) => {
 // GET /api/dashboard/analytics
 router.get('/analytics', async (req, res) => {
   try {
-    // 1. Monthly Trends (Last 6 Months)
-    // We'll generate a series of months and LEFT JOIN with our data to ensure all months are present
     const trendQuery = `
       WITH months AS (
         SELECT generate_series(
@@ -140,7 +192,10 @@ router.get('/analytics', async (req, res) => {
         SELECT 
           months.month,
           SUM(
-            p.revenue_earned / 
+            CASE 
+              WHEN p.billing_type = 'Fixed Bid' THEN p.fixed_contract_value
+              ELSE p.revenue_earned 
+            END / 
             GREATEST(1, EXTRACT(year from age(COALESCE(p.deadline, CURRENT_DATE), p.start_date)) * 12 + EXTRACT(month from age(COALESCE(p.deadline, CURRENT_DATE), p.start_date)) + 1)
           ) as total_revenue
         FROM projects p
@@ -158,8 +213,8 @@ router.get('/analytics', async (req, res) => {
       )
       SELECT 
         TO_CHAR(months.month, 'Mon') as name,
-        COALESCE(r.total_revenue, 0) as revenue,
-        COALESCE(e.total_expenses, 0) as expenses
+        ROUND(COALESCE(r.total_revenue, 0)) as revenue,
+        ROUND(COALESCE(e.total_expenses, 0)) as expenses
       FROM months
       LEFT JOIN monthly_revenue r ON r.month = months.month
       LEFT JOIN monthly_expenses e ON e.month = months.month
@@ -167,7 +222,6 @@ router.get('/analytics', async (req, res) => {
     `;
     const trendResult = await db.query(trendQuery);
 
-    // 2. Expense Breakdown (Last 6 Months)
     const breakdownQuery = `
       SELECT 
         category as name,
