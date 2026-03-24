@@ -247,29 +247,57 @@ const Dashboard = () => {
                         Profitability by Process Type
                     </h3>
                     <div className="space-y-6">
-                        {stats.processTypeBreakdown.map((item) => {
-                            const percentage = totalMargin > 0 ? (item.margin / totalMargin) * 100 : 0;
-                            const color = item.type === 'T&M' ? 'bg-blue-500' : item.type === 'Fixed Bid' ? 'bg-green-500' : 'bg-purple-500';
+                        {(() => {
+                            const sumOfProcessMargins = stats.processTypeBreakdown.reduce((sum, item) => sum + item.margin, 0);
                             return (
-                                <div
-                                    key={item.type}
-                                    onClick={() => navigate(`/projects?type=${encodeURIComponent(item.type)}`)}
-                                    className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 p-2 rounded-lg transition-colors group"
-                                >
-                                    <div className="flex items-center justify-between mb-2">
-                                        <span className="font-medium text-slate-700 dark:text-slate-300 group-hover:text-primary dark:group-hover:text-primary-light transition-colors">{item.type}</span>
-                                        <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(item.margin)}</span>
+                                <div className="space-y-6">
+                                    {stats.processTypeBreakdown.map((item) => {
+                                        const contributionPercentage = sumOfProcessMargins > 0 && item.margin > 0 
+                                            ? (item.margin / sumOfProcessMargins) * 100 
+                                            : 0;
+                                        const revenuePercentage = stats.totalRevenue > 0 ? (item.rev / stats.totalRevenue) * 100 : 0;
+                                        const color = item.type === 'T&M' ? 'bg-blue-500' : item.type === 'Fixed Bid' ? 'bg-green-500' : 'bg-purple-500';
+                                        return (
+                                            <div
+                                                key={item.type}
+                                                onClick={() => navigate(`/projects?type=${encodeURIComponent(item.type)}`)}
+                                                className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 p-2 rounded-lg transition-colors group"
+                                            >
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <span className="font-medium text-slate-700 dark:text-slate-300 group-hover:text-primary dark:group-hover:text-primary-light transition-colors">{item.type}</span>
+                                                    <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(item.margin)}</span>
+                                                </div>
+                                                <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
+                                                    <div
+                                                        className={`h-2.5 rounded-full ${color}`}
+                                                        style={{ width: `${Math.max(0, revenuePercentage)}%` }}
+                                                    ></div>
+                                                </div>
+                                                <p className="text-xs text-slate-400 mt-1 text-right">{contributionPercentage.toFixed(1)}% contribution</p>
+                                            </div>
+                                        );
+                                    })}
+                                    
+                                    {/* Final Reconciliation Footer */}
+                                    <div className="pt-6 border-t border-slate-200 dark:border-slate-700">
+                                        <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl space-y-3">
+                                            <div className="flex items-center justify-between text-sm">
+                                                <span className="text-slate-500 dark:text-slate-400 font-medium">Gross Operational Profit</span>
+                                                <span className="font-bold text-slate-700 dark:text-slate-300">{formatCurrency(sumOfProcessMargins)}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between text-sm">
+                                                <span className="text-slate-500 dark:text-slate-400 font-medium">Operational Expenses</span>
+                                                <span className="font-bold text-red-500">-{formatCurrency(stats.totalCompanyExpenses)}</span>
+                                            </div>
+                                            <div className="pt-3 mt-3 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                                                <span className="font-bold text-slate-900 dark:text-white">Final Net Savings</span>
+                                                <span className="font-bold text-lg text-emerald-500">{formatCurrency(netSavings)}</span>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
-                                        <div
-                                            className={`h-2.5 rounded-full ${color}`}
-                                            style={{ width: `${Math.max(0, percentage)}%` }}
-                                        ></div>
-                                    </div>
-                                    <p className="text-xs text-slate-400 mt-1 text-right">{percentage.toFixed(1)}% contribution</p>
                                 </div>
                             );
-                        })}
+                        })()}
                     </div>
                 </div>
 

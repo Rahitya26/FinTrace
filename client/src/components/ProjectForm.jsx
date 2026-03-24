@@ -320,35 +320,22 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                         </div>
 
                         {formData.billingType === 'Fixed Bid' && (
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label htmlFor="fixedContractValue" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                                        Total Contract Value ($)
-                                    </label>
-                                    <input
-                                        type="text"
-                                        id="fixedContractValue"
-                                        required
-                                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                                        value={displayValues.fixedContractValue}
-                                        onChange={(e) => handleCurrencyChange('fixedContractValue', e.target.value)}
-                                        placeholder="e.g. 10,000"
-                                    />
-                                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 italic">
-                                        Revenue will be calculated as contribution % of this value (in INR).
-                                    </p>
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                                        Budgeted Effort (Hours)
-                                    </label>
-                                    <div className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-slate-50 dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 font-mono">
-                                        {formData.budgetedHours} hrs
-                                    </div>
-                                    <p className="text-xs text-slate-500 mt-1 italic">
-                                        (Business Days × 8 hrs)
-                                    </p>
-                                </div>
+                            <div className="mb-4">
+                                <label htmlFor="fixedContractValue" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                    Total Contract Value ($)
+                                </label>
+                                <input
+                                    type="text"
+                                    id="fixedContractValue"
+                                    required
+                                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                    value={displayValues.fixedContractValue}
+                                    onChange={(e) => handleCurrencyChange('fixedContractValue', e.target.value)}
+                                    placeholder="e.g. 10,000"
+                                />
+                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 italic">
+                                    Revenue will be calculated as contribution % of this value (in INR).
+                                </p>
                             </div>
                         )}
 
@@ -602,10 +589,10 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
             </div> {/* END SCROLLABLE VIEWPORT */}
 
             {/* MARGIN DISPLAY & ACTIONS */}
-            <div className="shrink-0 py-6 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-center gap-4 bg-white dark:bg-slate-800 overflow-hidden relative z-20">
+            <div className="shrink-0 p-6 border-t border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row justify-between items-center gap-4 bg-slate-50 dark:bg-slate-800/80 overflow-hidden relative z-20 mt-auto">
                 {/* Financial Summary or Empty State */}
                 {resources.length === 0 || (formData.type !== 'T&M' && (!formData.revenue || Number(formData.revenue) === 0)) ? (
-                    <div className="flex items-center justify-center w-full sm:w-auto h-full px-4 py-2 text-sm text-slate-500 dark:text-slate-400 italic">
+                    <div className="flex items-center justify-center w-full sm:w-auto h-full px-4 py-2 text-sm text-slate-500 dark:text-slate-400 italic mr-auto">
                         Add resources and revenue to view margin projections
                     </div>
                 ) : formData.type === 'T&M' ? (() => {
@@ -620,7 +607,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                         }
                     });
                     return (
-                        <div className="flex flex-col max-w-full overflow-hidden shrink-0">
+                        <div className="flex flex-col max-w-full overflow-hidden shrink-0 mr-auto">
                             <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Projected Monthly Revenue</span>
                             <div className="flex items-end gap-3 truncate">
                                 <span className="text-xl font-bold text-slate-900 dark:text-transparent dark:bg-clip-text dark:bg-gradient-to-r dark:from-white dark:to-slate-300">
@@ -633,7 +620,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                         </div>
                     );
                 })() : (
-                    <div className="flex gap-3 sm:gap-6 items-center w-full sm:w-auto overflow-x-auto pb-2 sm:pb-0 hide-scrollbar">
+                    <div className="flex gap-3 sm:gap-6 items-center w-full sm:w-auto overflow-x-auto pb-2 sm:pb-0 hide-scrollbar mr-auto">
                         <div className="shrink-0">
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
                                 {formData.type === 'T&M' ? 'Revenue' : 'Quoted Bid'}
@@ -673,18 +660,18 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                     </div>
                 )}
 
-                <div className="flex justify-end space-x-3 w-full sm:w-auto">
+                <div className="flex justify-end space-x-4 w-full sm:w-auto">
                     <button
                         type="button"
                         onClick={onCancel}
-                        className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+                        className="px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
                     >
                         Cancel
                     </button>
                     <button
                         type="submit"
                         disabled={isLoading}
-                        className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
+                        className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-xl hover:bg-primary-dark transition-colors disabled:opacity-50"
                     >
                         {isLoading ? 'Saving...' : 'Add Project'}
                     </button>

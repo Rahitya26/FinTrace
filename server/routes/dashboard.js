@@ -71,15 +71,17 @@ router.get('/summary', async (req, res) => {
     const approvedLogsQuery = `
         SELECT 
             t.project_id, 
-            t.employee_id, 
+            t.employee_id,
+            p.billing_type,
             SUM(t.hours_worked) as total_hours,
             SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as total_inr_revenue
         FROM timesheet_logs t
         JOIN employees e ON t.employee_id = e.id
         JOIN timesheet_approvals ta ON t.approval_id = ta.id
+        JOIN projects p ON t.project_id = p.id
         LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
         ${logsWhere}
-        GROUP BY t.project_id, t.employee_id
+        GROUP BY t.project_id, t.employee_id, p.billing_type
     `;
     const approvedLogsResult = await db.query(approvedLogsQuery, logsParams);
     const approvedLogs = approvedLogsResult.rows;
@@ -118,8 +120,7 @@ router.get('/summary', async (req, res) => {
       }
       processTypeBreakdownMap[type].count += 1;
       processTypeBreakdownMap[type].rev += rev;
-      processTypeBreakdownMap[type].cost += cost;
-      processTypeBreakdownMap[type].margin += (rev - cost);
+      // Note: processTypeBreakdownMap[type].cost will be calculated pro-rata later
       processTypeBreakdownMap[type].projectedRev += (Number(calculated.projectedRevenue) || 0);
 
       if (calculated.debug_info?.plans) {
@@ -137,19 +138,59 @@ router.get('/summary', async (req, res) => {
       }
     });
 
+    // 6. Calculate Total Payroll & Pro-Rata Staff Costs
+    const monthsMultiplier = getMonthsInPeriod(startDate, endDate);
+    let totalPayrollCost = 0;
+
+    // Group hours by employee and billing type
+    const employeeHoursMap = {};
+    allActiveEmployees.rows.forEach(emp => {
+        employeeHoursMap[emp.id] = { totalHours: 0, byType: {} };
+    });
+
+    approvedLogs.forEach(agg => {
+        if (employeeHoursMap[agg.employee_id]) {
+            const hrs = Number(agg.total_hours) || 0;
+            const bType = agg.billing_type || 'T&M';
+            employeeHoursMap[agg.employee_id].totalHours += hrs;
+            if (!employeeHoursMap[agg.employee_id].byType[bType]) {
+                employeeHoursMap[agg.employee_id].byType[bType] = 0;
+            }
+            employeeHoursMap[agg.employee_id].byType[bType] += hrs;
+        }
+    });
+
+    allActiveEmployees.rows.forEach(emp => {
+        const salary = Number(emp.monthly_salary) || 0;
+        const periodSalary = salary * monthsMultiplier;
+        totalPayrollCost += periodSalary;
+
+        const empMap = employeeHoursMap[emp.id];
+        if (empMap && empMap.totalHours > 0) {
+            for (const bType in empMap.byType) {
+                const ratio = empMap.byType[bType] / empMap.totalHours;
+                const allocatedCost = ratio * periodSalary;
+                
+                if (!processTypeBreakdownMap[bType]) {
+                    processTypeBreakdownMap[bType] = { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 };
+                }
+                processTypeBreakdownMap[bType].cost += allocatedCost;
+            }
+        }
+    });
+
+    // Update margin for each process type after pro-rata cost calculation
+    Object.keys(processTypeBreakdownMap).forEach(type => {
+        const t = processTypeBreakdownMap[type];
+        t.margin = t.rev - t.cost;
+    });
+
     const processTypeBreakdown = Object.keys(processTypeBreakdownMap).map(type => ({
       type,
       ...processTypeBreakdownMap[type]
     }));
 
     const employeeCostList = Object.values(employeeCostMap).sort((a, b) => b.totalCost - a.totalCost);
-
-    // 6. Calculate Total Payroll for ALL Active Employees in this period
-    const monthsMultiplier = getMonthsInPeriod(startDate, endDate);
-    let totalPayrollCost = 0;
-    allActiveEmployees.rows.forEach(emp => {
-        totalPayrollCost += (Number(emp.monthly_salary) || 0) * monthsMultiplier;
-    });
 
     // 7. Bench Cost is now simply the unallocated portion of the payroll
     const totalBenchCost = Math.max(0, totalPayrollCost - totalProjectCosts);
