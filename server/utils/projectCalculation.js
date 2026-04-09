@@ -18,11 +18,14 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
     // 2. Determine Total Project Revenue for the SELECTED PERIOD
     let computedRevenue = 0;
     if (isFixedBid) {
-        // For Fixed Bid, overall revenue in the period is the sum of resource-specific revenue (hours * hourly_project_value)
-        const hourlyProjectValueINR = project.budgeted_hours > 0 ? (Number(project.fixed_contract_value) * 83.15) / Number(project.budgeted_hours) : 0;
-        projectApprovedAggregates.forEach(agg => {
-            computedRevenue += (Number(agg.total_hours) || 0) * hourlyProjectValueINR;
-        });
+        if (project.status === 'Completed' || periodProjectHours >= 160) {
+            computedRevenue = Number(project.quoted_bid_value || 0);
+        } else if (project.budgeted_hours > 0) {
+            const hourlyProjectValueINR = Number(project.quoted_bid_value || 0) / Number(project.budgeted_hours);
+            projectApprovedAggregates.forEach(agg => {
+                computedRevenue += (Number(agg.total_hours) || 0) * hourlyProjectValueINR;
+            });
+        }
     } else {
         projectApprovedAggregates.forEach(agg => {
             computedRevenue += Number(agg.total_inr_revenue) || 0;
@@ -39,10 +42,10 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
             let asset_status = 'LIABILITY';
             let status_color = 'red';
 
-            const agg = projectApprovedAggregates.find(a => Number(a.employee_id) === Number(empId));
-            if (agg) {
-                periodHours = Number(agg.total_hours) || 0;
-            }
+            const empProjectLogs = projectApprovedAggregates.filter(a => Number(a.employee_id) === Number(empId));
+            empProjectLogs.forEach(agg => {
+                periodHours += Number(agg.total_hours) || 0;
+            });
 
             const monthlySalary = Number(plan.monthly_salary) || 0;
             const internalHourlyRate = monthlySalary / 160;
@@ -52,17 +55,18 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
             // We pass ALL plans and ALL aggregates for that employee to the helper.
             const activeMonthsInPeriod = getActiveMonthsForEmployee(empId, startDate, endDate, allPlans, allApprovedLogs);
 
-            const hourlyProjectValueINR = (isFixedBid && project.budgeted_hours > 0) 
-                ? (Number(project.fixed_contract_value) * 83.15) / Number(project.budgeted_hours) 
-                : 0;
-
             // 2. Revenue Recognition
             if (isFixedBid) {
-                approvedRevenue = periodHours * hourlyProjectValueINR;
-            } else {
-                if (agg) {
-                    approvedRevenue = Number(agg.total_inr_revenue) || 0;
+                if (project.status === 'Completed' || periodProjectHours >= 160) {
+                    approvedRevenue = (periodHours / Math.max(1, periodProjectHours)) * Number(project.quoted_bid_value || 0);
+                } else if (project.budgeted_hours > 0) {
+                    const hourlyProjectValueINR = Number(project.quoted_bid_value || 0) / Number(project.budgeted_hours);
+                    approvedRevenue = periodHours * hourlyProjectValueINR;
+                } else {
+                    approvedRevenue = 0;
                 }
+            } else {
+                approvedRevenue = empProjectLogs.reduce((sum, log) => sum + (Number(log.total_inr_revenue) || 0), 0);
             }
 
             // Status: compare revenue to salary for active months
@@ -74,10 +78,33 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
                 status_color = 'red';
             }
 
-            // 3. Burn Calculation: (Salary * Allocation * Active Months)
-            const activeAllocation = (Number(plan.allocation_percentage) || 0) / 100;
-            const planBurn = (monthlySalary * activeAllocation) * activeMonthsInPeriod;
+            // 3. Burn Calculation: Pro-Rata Loop Per Month
+            let planBurn = 0;
+            empProjectLogs.forEach(projLog => {
+                const month = projLog.log_month;
+                const year = projLog.log_year;
+                const hoursThisMonth = Number(projLog.total_hours) || 0;
+
+                const employeeAllLogsThisMonth = allApprovedLogs.filter(a => 
+                    Number(a.employee_id) === Number(empId) && 
+                    Number(a.log_month) === Number(month) && 
+                    Number(a.log_year) === Number(year)
+                );
+
+                const totalGlobalHoursThisMonth = employeeAllLogsThisMonth.reduce(
+                    (sum, log) => sum + (Number(log.total_hours) || 0), 0
+                );
+
+                if (totalGlobalHoursThisMonth > 0) {
+                    const ratio = hoursThisMonth / totalGlobalHoursThisMonth;
+                    planBurn += ratio * monthlySalary; 
+                }
+            });
             totalLockedStaffBurn += planBurn;
+
+            const hourlyProjectValueUSD = (isFixedBid && project.budgeted_hours > 0) 
+                ? (Number(project.quoted_bid_value || 0) / 83.15) / Number(project.budgeted_hours) 
+                : 0;
 
             enhancedPlans.push({
                 name: plan.name,
@@ -91,7 +118,8 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
                 netProfitOrLoss: Math.round(approvedRevenue - planBurn),
                 asset_status: asset_status,
                 status_color: status_color,
-                allocation_percentage: plan.allocation_percentage
+                allocation_percentage: plan.allocation_percentage,
+                virtual_usd_rate: hourlyProjectValueUSD
             });
         });
     }

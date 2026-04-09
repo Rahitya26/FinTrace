@@ -5,7 +5,12 @@ import Modal from './Modal';
 import { cn, formatCurrency } from '../lib/utils';
 import { getEmployeePerformance } from '../lib/api';
 
-const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName, startDate, endDate }) => {
+const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName }) => {
+    const defaultStart = `${new Date().getFullYear()}-01-01`;
+    const defaultEnd = new Date().toISOString().split('T')[0];
+
+    const [localStartDate, setLocalStartDate] = useState(defaultStart);
+    const [localEndDate, setLocalEndDate] = useState(defaultEnd);
     const [performanceData, setPerformanceData] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
 
@@ -13,15 +18,15 @@ const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName, s
         if (isOpen && employeeId) {
             fetchPerformance();
         }
-    }, [isOpen, employeeId, startDate, endDate]);
+    }, [isOpen, employeeId, localStartDate, localEndDate]);
 
     const fetchPerformance = async () => {
         setIsLoading(true);
         setPerformanceData(null);
         try {
             const params = {
-                startDate: startDate || '',
-                endDate: endDate || ''
+                startDate: localStartDate || '',
+                endDate: localEndDate || ''
             };
 
             const res = await getEmployeePerformance(employeeId, params);
@@ -39,6 +44,27 @@ const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName, s
             onClose={onClose}
             title={`${employeeName} - Performance Track Record`}
         >
+            <div className="flex items-center gap-4 mb-6 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                <div className="flex flex-col">
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Start Date</label>
+                    <input 
+                        type="date" 
+                        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        value={localStartDate}
+                        onChange={(e) => setLocalStartDate(e.target.value)}
+                    />
+                </div>
+                <div className="flex flex-col">
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">End Date</label>
+                    <input 
+                        type="date" 
+                        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        value={localEndDate}
+                        onChange={(e) => setLocalEndDate(e.target.value)}
+                    />
+                </div>
+            </div>
+
             <div className="min-h-[300px] flex flex-col justify-center">
                 {isLoading ? (
                     <div className="flex flex-col items-center text-slate-500">
@@ -61,11 +87,11 @@ const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName, s
                                 </p>
                             </div>
                             <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
-                                <p className="text-sm text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">Monthly Salary</p>
+                                <p className="text-sm text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">Period Salary Cost</p>
                                 <p className="text-lg font-semibold text-slate-700 dark:text-slate-300 mt-1">
-                                    {formatCurrency(performanceData.monthlyRate || 0)} <span className="text-xs font-normal text-slate-400">/mo</span>
+                                    {formatCurrency(performanceData.periodStaffCost || 0)} <span className="text-xs font-normal text-slate-400">/total</span>
                                 </p>
-                                <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-tighter">Basis: 160 Standard Hrs</p>
+                                <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-tighter">Pro-Rata Fraction Evaluated</p>
                             </div>
                             <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 col-span-2 lg:col-span-1">
                                 <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Asset Status</p>

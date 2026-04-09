@@ -25,6 +25,7 @@ const Employees = () => {
         monthly_salary: '',
         status: 'Active',
         specialization: 'Fixed Bid',
+        joining_date: new Date().toISOString().split('T')[0],
         usd_hourly_rate: ''
     });
     const [displayValues, setDisplayValues] = useState({
@@ -104,7 +105,7 @@ const Employees = () => {
     };
 
     const openAddModal = () => {
-        setFormData({ name: '', role: '', monthly_salary: '', status: 'Active', specialization: 'Fixed Bid', usd_hourly_rate: '' });
+        setFormData({ name: '', role: '', monthly_salary: '', status: 'Active', specialization: 'Fixed Bid', joining_date: new Date().toISOString().split('T')[0], usd_hourly_rate: '' });
         setDisplayValues({ monthly_salary: '', usd_hourly_rate: '' });
         setIsEditing(false);
         setCurrentEmployee(null);
@@ -118,6 +119,7 @@ const Employees = () => {
             monthly_salary: employee.monthly_salary,
             status: employee.status,
             specialization: employee.specialization || 'Fixed Bid',
+            joining_date: employee.joining_date ? employee.joining_date.split('T')[0] : '2026-02-01',
             usd_hourly_rate: employee.usd_hourly_rate
         });
         setDisplayValues({
@@ -529,6 +531,21 @@ const Employees = () => {
                                             <option value="Active">Active</option>
                                             <option value="Inactive">Inactive</option>
                                         </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                            Joining Date <span className="text-red-500">*</span>
+                                        </label>
+                                        <div className="relative">
+                                            <input
+                                                type="date"
+                                                name="joining_date"
+                                                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-700 text-slate-900 dark:text-white dark:[color-scheme:dark]"
+                                                value={formData.joining_date}
+                                                onChange={handleInputChange}
+                                                required={true}
+                                            />
+                                        </div>
                                     </div>
                                 </div>
 

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const { calculateProjectFinancials } = require('../utils/projectCalculation');
-const { getActiveMonthsForEmployee, toLocalDate, getMonthsInPeriod } = require('../utils/financialUtils');
+const { getActiveMonthsForEmployee, toLocalDate, getMonthsInPeriod, getValidMonthsForEmployee } = require('../utils/financialUtils');
 
 // GET /api/dashboard/summary
 router.get('/summary', async (req, res) => {
@@ -27,8 +27,8 @@ router.get('/summary', async (req, res) => {
     const projectsResult = await db.query(projectsQuery, queryParams);
     const projects = projectsResult.rows;
 
-    // 2. Fetch all active employees to initialize the map
-    const allActiveEmployees = await db.query("SELECT id, name, role, monthly_salary FROM employees WHERE status = 'Active'");
+    // 2. Fetch all employees to initialize the map (historical cost tracking requires inactive employees to be tallied)
+    const allActiveEmployees = await db.query("SELECT id, name, role, joining_date, monthly_salary FROM employees");
     const employeeCostMap = {};
     allActiveEmployees.rows.forEach(emp => {
       employeeCostMap[emp.id] = {
@@ -109,10 +109,8 @@ router.get('/summary', async (req, res) => {
       const calculated = calculateProjectFinancials(project, allPlans, unapprovedLogs, approvedLogs, historyLogs, startDate, endDate);
       
       const rev = Number(calculated.revenue_earned) || 0;
-      const cost = Number(calculated.employee_costs) || 0;
       
       totalRevenue += rev;
-      totalProjectCosts += cost;
 
       const type = project.billing_type || project.type || 'T&M';
       if (!processTypeBreakdownMap[type]) {
@@ -139,7 +137,6 @@ router.get('/summary', async (req, res) => {
     });
 
     // 6. Calculate Total Payroll & Pro-Rata Staff Costs
-    const monthsMultiplier = getMonthsInPeriod(startDate, endDate);
     let totalPayrollCost = 0;
 
     // Group hours by employee and billing type
@@ -162,14 +159,19 @@ router.get('/summary', async (req, res) => {
 
     allActiveEmployees.rows.forEach(emp => {
         const salary = Number(emp.monthly_salary) || 0;
-        const periodSalary = salary * monthsMultiplier;
+        const validMonthsMultiplier = getValidMonthsForEmployee(emp.joining_date, startDate, endDate);
+        const periodSalary = salary * validMonthsMultiplier;
         totalPayrollCost += periodSalary;
+
+        const hourlyInternalRate = salary / 160;
 
         const empMap = employeeHoursMap[emp.id];
         if (empMap && empMap.totalHours > 0) {
             for (const bType in empMap.byType) {
-                const ratio = empMap.byType[bType] / empMap.totalHours;
-                const allocatedCost = ratio * periodSalary;
+                const hrs = empMap.byType[bType];
+                const allocatedCost = hrs * hourlyInternalRate;
+                
+                totalProjectCosts += allocatedCost;
                 
                 if (!processTypeBreakdownMap[bType]) {
                     processTypeBreakdownMap[bType] = { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 };

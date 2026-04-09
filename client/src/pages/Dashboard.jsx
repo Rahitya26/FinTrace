@@ -252,10 +252,10 @@ const Dashboard = () => {
                             return (
                                 <div className="space-y-6">
                                     {stats.processTypeBreakdown.map((item) => {
-                                        const contributionPercentage = sumOfProcessMargins > 0 && item.margin > 0 
-                                            ? (item.margin / sumOfProcessMargins) * 100 
+                                        const contributionPercentage = stats.totalRevenue > 0 
+                                            ? (item.rev / stats.totalRevenue) * 100 
                                             : 0;
-                                        const revenuePercentage = stats.totalRevenue > 0 ? (item.rev / stats.totalRevenue) * 100 : 0;
+                                        const revenuePercentage = contributionPercentage;
                                         const color = item.type === 'T&M' ? 'bg-blue-500' : item.type === 'Fixed Bid' ? 'bg-green-500' : 'bg-purple-500';
                                         return (
                                             <div

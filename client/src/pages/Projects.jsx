@@ -121,6 +121,11 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
                         <Users className="w-4 h-4 mr-1 shrink-0" />
                         <span className="truncate">{project.client_name}</span>
                     </div>
+                    {isFixedBid && Number(project.quoted_bid_value) > 0 && (
+                        <div className="flex items-center text-xs text-blue-600 dark:text-blue-400 mt-1 font-semibold">
+                            Contract Value: {formatCurrency(project.quoted_bid_value)}
+                        </div>
+                    )}
 
                     {/* Employee Avatars Container */}
                     <div className="flex mt-3">
@@ -302,17 +307,6 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
                                                 ) : (
                                                     <>A +30 day delay will burn an additional <strong>{formatCurrency(project.debug_info.monthlyBurn)}</strong> in active staff salaries, reducing margin to <strong>{formatCurrency(Number(project.margin) - project.debug_info.monthlyBurn)}</strong>.</>
                                                 )}
-                                            </p>
-                                        </div>
-                                    </div>
-                                )}
-                                {isFixedBid && project.deadline && (
-                                    <div className="mt-3 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800/50 rounded-lg p-2.5 flex items-start gap-2.5 text-left">
-                                        <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-500 mt-0.5 shrink-0" />
-                                        <div>
-                                            <p className="text-[10px] uppercase font-bold text-red-800 dark:text-red-500 tracking-wider">Financial Risk HUD</p>
-                                            <p className="text-xs text-red-700 dark:text-red-400 mt-0.5 font-medium">
-                                                Every day past {format(new Date(project.deadline), 'dd MMM')} costs the company <span className="font-bold underline">{formatCurrency(project.debug_info?.dailyBurn || 0)}</span> in salary burn.
                                             </p>
                                         </div>
                                     </div>
@@ -1005,19 +999,10 @@ const Projects = () => {
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-6 text-right">
-                                        <div>
-                                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter mb-0.5">Billable Rate</div>
-                                            <div className="text-xs font-mono text-blue-600 dark:text-blue-400 font-bold">
-                                                {Number(p.hourly_rate || p.usd_rate || 0) > 0 ? `${formatCurrency(p.hourly_rate || p.usd_rate)}/hr` : 'N/A'}
-                                            </div>
-                                        </div>
                                         <div className="min-w-[100px]">
                                             <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter mb-0.5">Projected Revenue</div>
                                             <div className="text-xs font-mono text-emerald-600 dark:text-emerald-400 font-bold">
                                                 {formatCurrency(p.totalPlanRevenue || 0)}
-                                            </div>
-                                            <div className="text-[9px] text-slate-400 italic">
-                                                {Number(p.totalHours || 0).toFixed(2)} hrs logged
                                             </div>
                                         </div>
                                     </div>
@@ -1040,26 +1025,11 @@ const Projects = () => {
                                     <ArrowUpRight className="w-3 h-3" /> Profit Generators
                                 </h4>
                                 <div className="space-y-2">
-                                    {selectedTeamProject?.debug_info?.plans?.filter(p => (Number(p.totalPlanRevenue || 0) - Number(p.totalPlanCost || 0)) >= 0).map((p, idx) => {
-                                        const margin = Number(p.totalPlanRevenue || 0) - Number(p.totalPlanCost || 0);
-                                        return (
-                                        <div key={idx} className="flex items-center justify-between p-2.5 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg border border-emerald-100/50 dark:border-emerald-800/20">
-                                            <div className="flex flex-col">
-                                                <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{p.name}</span>
-                                                <span className="text-[9px] text-slate-400 font-medium">Rate: {Number(p.hourly_rate || p.usd_rate || 0) > 0 ? `${formatCurrency(p.hourly_rate || p.usd_rate)}/hr` : 'N/A'}</span>
-                                            </div>
-                                            <div className="flex items-center gap-4 text-right">
-                                                <div className="flex flex-col items-end border-r border-emerald-200 dark:border-emerald-800 pr-3">
-                                                    <span className="text-xs font-black text-slate-600 dark:text-slate-300">{formatCurrency(p.totalPlanRevenue || 0)}</span>
-                                                    <div className="text-[8px] text-slate-400 font-bold uppercase tracking-tighter">Proj Rev</div>
-                                                </div>
-                                                <div className="flex flex-col items-end min-w-[70px]">
-                                                    <span className="text-xs font-black text-emerald-600 dark:text-emerald-400">+{formatCurrency(margin)}</span>
-                                                    <div className="text-[8px] text-emerald-500/70 font-bold uppercase tracking-tighter">Net Profit</div>
-                                                </div>
-                                            </div>
+                                    {selectedTeamProject?.debug_info?.plans?.filter(p => (Number(p.totalPlanRevenue || 0) - Number(p.totalPlanCost || 0)) >= 0).map((p, idx) => (
+                                        <div key={idx} className="flex items-center p-2.5 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg border border-emerald-100/50 dark:border-emerald-800/20">
+                                            <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{p.name}</span>
                                         </div>
-                                    )})}
+                                    ))}
                                     {selectedTeamProject?.debug_info?.plans?.filter(p => (Number(p.totalPlanRevenue || 0) - Number(p.totalPlanCost || 0)) >= 0).length === 0 && (
                                         <p className="text-[10px] text-slate-400 italic px-2">No generators identified.</p>
                                     )}
@@ -1073,33 +1043,11 @@ const Projects = () => {
                                     <ArrowDownRight className="w-3 h-3" /> Cost Burdens
                                 </h4>
                                 <div className="space-y-2">
-                                    {selectedTeamProject?.debug_info?.plans?.filter(p => (Number(p.totalPlanRevenue || 0) - Number(p.totalPlanCost || 0)) < 0).map((p, idx) => {
-                                        const margin = Number(p.totalPlanRevenue || 0) - Number(p.totalPlanCost || 0);
-                                        return (
-                                        <div key={idx} className="flex flex-col gap-1 p-2.5 bg-rose-50/50 dark:bg-rose-900/10 rounded-lg border border-rose-100/50 dark:border-rose-800/20 shadow-sm text-right">
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex flex-col text-left">
-                                                    <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{p.name}</span>
-                                                    <span className="text-[9px] text-slate-400 font-medium">Rate: {Number(p.hourly_rate || p.usd_rate || 0) > 0 ? `${formatCurrency(p.hourly_rate || p.usd_rate)}/hr` : 'N/A'}</span>
-                                                </div>
-                                                <div className="flex items-center gap-4 text-right">
-                                                    <div className="flex flex-col items-end border-r border-rose-200 dark:border-rose-800 pr-3">
-                                                        <span className="text-xs font-black text-slate-600 dark:text-slate-300">{formatCurrency(p.totalPlanRevenue || 0)}</span>
-                                                        <div className="text-[8px] text-slate-400 font-bold uppercase tracking-tighter">Proj Rev</div>
-                                                    </div>
-                                                    <div className="flex flex-col items-end min-w-[70px]">
-                                                        <span className="text-xs font-black text-rose-600 dark:text-rose-400">{formatCurrency(margin)}</span>
-                                                        <div className="text-[8px] text-rose-500/70 font-bold uppercase tracking-tighter">Net Loss</div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            {p.zeroHourNote && (
-                                                <span className="text-[9px] text-rose-500/80 font-bold italic flex items-center gap-1 justify-end mt-1">
-                                                    <AlertCircle className="w-2.5 h-2.5" /> {p.zeroHourNote}
-                                                </span>
-                                            )}
+                                    {selectedTeamProject?.debug_info?.plans?.filter(p => (Number(p.totalPlanRevenue || 0) - Number(p.totalPlanCost || 0)) < 0).map((p, idx) => (
+                                        <div key={idx} className="flex items-center p-2.5 bg-rose-50/50 dark:bg-rose-900/10 rounded-lg border border-rose-100/50 dark:border-rose-800/20 shadow-sm text-left">
+                                            <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{p.name}</span>
                                         </div>
-                                    )})}
+                                    ))}
                                     {selectedTeamProject?.debug_info?.plans?.filter(p => (Number(p.totalPlanRevenue || 0) - Number(p.totalPlanCost || 0)) < 0).length === 0 && (
                                         <div className="p-4 text-center bg-slate-50 dark:bg-slate-900/20 rounded-xl border border-dashed border-slate-200 dark:border-slate-800/50">
                                             <p className="text-[11px] text-slate-400 italic">No cost burdens identified currently. Performance is optimal!</p>
@@ -1112,24 +1060,24 @@ const Projects = () => {
                                     <div className="grid grid-cols-2 gap-4">
                                         <div className="bg-slate-50 dark:bg-slate-900/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
                                             <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">Project Revenue (Appr)</div>
-                                            <div className="text-sm font-black text-emerald-600">
-                                                {formatCurrency(Number(selectedTeamProject?.revenue_earned || 0).toFixed(2))}
+                                            <div className="text-sm font-black text-emerald-600 whitespace-nowrap">
+                                                {formatCurrency(Number(selectedTeamProject?.revenue_earned || 0))}
                                             </div>
                                         </div>
                                         <div className="bg-slate-50 dark:bg-slate-900/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800 text-right">
                                             <div className="text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">Total Staff Burn</div>
-                                            <div className="text-sm font-black text-rose-600">
-                                                {formatCurrency(Number(selectedTeamProject?.employee_costs || 0).toFixed(2))}
+                                            <div className="text-sm font-black text-rose-600 whitespace-nowrap">
+                                                {formatCurrency(Number(selectedTeamProject?.employee_costs || 0))}
                                             </div>
                                         </div>
                                     </div>
                                     <div className="mt-4 p-4 bg-primary/5 dark:bg-primary/10 rounded-xl border border-primary/10 dark:border-primary/20 flex justify-between items-center">
                                         <span className="text-[10px] text-primary/70 font-black uppercase tracking-widest">Actual Margin</span>
                                         <span className={cn(
-                                            "text-base font-black font-mono",
+                                            "text-base font-black font-mono whitespace-nowrap",
                                             (selectedTeamProject?.margin || 0) >= 0 ? "text-emerald-600" : "text-rose-600"
                                         )}>
-                                            {formatCurrency(Number(selectedTeamProject?.margin || 0).toFixed(2))}
+                                            {formatCurrency(Number(selectedTeamProject?.margin || 0))}
                                         </span>
                                     </div>
                                 </div>

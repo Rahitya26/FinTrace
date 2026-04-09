@@ -5,6 +5,40 @@ const getMonthsInPeriod = (startDate, endDate) => {
     return (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth()) + 1;
 };
 
+const getValidMonthsForEmployee = (joiningDate, periodStart, periodEnd) => {
+    const pStart = toLocalDate(periodStart);
+    const pEnd = toLocalDate(periodEnd);
+    if (!pStart || !pEnd) return 1;
+
+    let validCount = 0;
+    let iter = new Date(pStart.getFullYear(), pStart.getMonth(), 1);
+    
+    // Fallback joining logic: treat missing dates as 2026-02-01 globally mapped default.
+    const joinDateObj = joiningDate ? toLocalDate(joiningDate) : new Date(2026, 1, 1);
+    // Determine the precise start Month boundary for the employee
+    const joinThresholdMonth = new Date(joinDateObj.getFullYear(), joinDateObj.getMonth(), 1);
+
+    while (iter <= pEnd) {
+        if (iter >= joinThresholdMonth) {
+            validCount++;
+        }
+        iter.setMonth(iter.getMonth() + 1);
+    }
+    return validCount;
+};
+
+const getBusinessHoursInMonth = (year, month) => {
+    let workingDays = 0;
+    const date = new Date(year, month, 1);
+    while (date.getMonth() === month) {
+        if (date.getDay() !== 0 && date.getDay() !== 6) {
+            workingDays++;
+        }
+        date.setDate(date.getDate() + 1);
+    }
+    return workingDays * 8;
+};
+
 const toLocalDate = (dateStr) => {
     if (!dateStr) return null;
     const d = new Date(dateStr);
@@ -79,6 +113,8 @@ const calculateFixedBidRevenueShare = (plan, periodStart, periodEnd) => {
 
 module.exports = {
     getMonthsInPeriod,
+    getValidMonthsForEmployee,
+    getBusinessHoursInMonth,
     getActiveMonthsForEmployee,
     toLocalDate,
     calculateFixedBidRevenueShare

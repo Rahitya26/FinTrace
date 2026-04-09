@@ -18,6 +18,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
         type: 'T&M',
         billingType: 'T&M',
         fixedContractValue: '',
+        quotedBidValue: initialData?.quoted_bid_value || '',
         revenue: '',
         startDate: new Date().toISOString().split('T')[0],
         deadline: '',
@@ -27,7 +28,8 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
 
     const [displayValues, setDisplayValues] = useState({
         revenue: initialData?.revenue ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(initialData.revenue) : '',
-        fixedContractValue: initialData?.fixed_contract_value ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(initialData.fixed_contract_value) : ''
+        fixedContractValue: initialData?.fixed_contract_value ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(initialData.fixed_contract_value) : '',
+        quotedBidValue: initialData?.quoted_bid_value ? new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(initialData.quoted_bid_value) : ''
     });
 
     // Resource Planner Data
@@ -228,7 +230,8 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                     startDate: r.startDate || formData.startDate,
                     endDate: r.endDate || null
                 })),
-                budgetedHours: formData.budgetedHours
+                budgetedHours: formData.budgetedHours,
+                quotedBidValue: parseFloat(formData.quotedBidValue) || 0
             });
         } catch (err) {
             toast.error("Invalid form data");
@@ -321,20 +324,20 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
 
                         {formData.billingType === 'Fixed Bid' && (
                             <div className="mb-4">
-                                <label htmlFor="fixedContractValue" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                                    Total Contract Value ($)
+                                <label htmlFor="quotedBidValue" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                    Total Contract Value (₹)
                                 </label>
                                 <input
                                     type="text"
-                                    id="fixedContractValue"
+                                    id="quotedBidValue"
                                     required
                                     className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                                    value={displayValues.fixedContractValue}
-                                    onChange={(e) => handleCurrencyChange('fixedContractValue', e.target.value)}
-                                    placeholder="e.g. 10,000"
+                                    value={displayValues.quotedBidValue}
+                                    onChange={(e) => handleCurrencyChange('quotedBidValue', e.target.value)}
+                                    placeholder="e.g. 8,30,000"
                                 />
                                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 italic">
-                                    Revenue will be calculated as contribution % of this value (in INR).
+                                    Required. This base value drives internal hourly rates for fixed bid margins.
                                 </p>
                             </div>
                         )}

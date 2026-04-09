@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { getActiveMonthsForEmployee, toLocalDate, calculateFixedBidRevenueShare } = require('../utils/financialUtils');
+const { getActiveMonthsForEmployee, toLocalDate, calculateFixedBidRevenueShare, getBusinessHoursInMonth } = require('../utils/financialUtils');
 
 // GET /api/employees/:id/performance
 router.get('/:id/performance', async (req, res) => {
@@ -10,7 +10,7 @@ router.get('/:id/performance', async (req, res) => {
 
     try {
         // 1. Get Employee Details
-        const empResult = await db.query('SELECT monthly_salary FROM employees WHERE id = $1', [empId]);
+        const empResult = await db.query('SELECT monthly_salary, joining_date FROM employees WHERE id = $1', [empId]);
         if (empResult.rows.length === 0) {
             return res.status(404).json({ error: 'Employee not found' });
         }
@@ -101,7 +101,9 @@ router.get('/:id/performance', async (req, res) => {
                 p.id as project_id,
                 p.billing_type,
                 p.fixed_contract_value,
+                p.quoted_bid_value,
                 p.budgeted_hours,
+                p.status as project_status,
                 t.hours_worked,
                 COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate as tm_rate,
                 prp.allocation_percentage,
@@ -117,37 +119,39 @@ router.get('/:id/performance', async (req, res) => {
               AND t.approval_id IS NOT NULL
         `;
         const logsResult = await db.query(logsQuery, [empId, start, end]);
-        const totalLogsInPeriod = logsResult.rows.length;
 
-        // Get unique projects the employee worked on in this period to handle allocation-based revenue
-        const periodProjectPlans = await db.query(`
-            SELECT prp.*, p.billing_type, p.fixed_contract_value,
-            (SELECT SUM(allocation_percentage) FROM project_resource_plans WHERE project_id = prp.project_id) as total_project_allocation
-            FROM project_resource_plans prp
-            JOIN projects p ON prp.project_id = p.id
-            WHERE prp.employee_id = $1
-            AND (prp.start_date <= $3 OR prp.start_date IS NULL)
-            AND (prp.end_date >= $2 OR prp.end_date IS NULL)
-        `, [empId, start, end]);
+        // Calculate Project-Level Aggregates for Fixed Bid Progress Override
+        const projectHoursMap = {};
+        logsResult.rows.forEach(log => {
+            if (!projectHoursMap[log.project_id]) {
+                projectHoursMap[log.project_id] = { 
+                    totalLoggedHours: 0, 
+                    status: log.project_status, 
+                    quotedBid: Number(log.quoted_bid_value || 0), 
+                    budgetedHours: Number(log.budgeted_hours || 0) 
+                };
+            }
+            projectHoursMap[log.project_id].totalLoggedHours += Number(log.hours_worked || 0);
+        });
 
-        // Use SHARED logic for active months to ensure sync with Dashboard
-        const activeMonthsCount = getActiveMonthsForEmployee(empId, startDate, endDate, periodProjectPlans.rows, logsResult.rows);
-
-        // 4. Calculate Total Revenue
+        // 4. Calculate Total Revenue using Milestone Logic
         let totalRevenue = 0;
         
         logsResult.rows.forEach(log => {
             if (log.billing_type === 'Fixed Bid') {
-                const hourlyProjectValueINR = log.budgeted_hours > 0 ? (Number(log.fixed_contract_value) * 83.15) / Number(log.budgeted_hours) : 0;
-                totalRevenue += Number(log.hours_worked) * hourlyProjectValueINR;
+                const projAgg = projectHoursMap[log.project_id];
+                if (projAgg.status === 'Completed' || projAgg.totalLoggedHours >= 160) {
+                    // Fractional scaling locked to 100% quoted bid distribution mapped per log
+                    const fraction = Number(log.hours_worked) / Math.max(1, projAgg.totalLoggedHours);
+                    totalRevenue += fraction * projAgg.quotedBid;
+                } else if (projAgg.budgetedHours > 0) {
+                    const hourlyProjectValueINR = projAgg.quotedBid / projAgg.budgetedHours;
+                    totalRevenue += Number(log.hours_worked) * hourlyProjectValueINR;
+                }
             } else {
                 totalRevenue += Number(log.hours_worked) * (Number(log.tm_rate) || 0);
             }
         });
-
-        // 5. Calculate Cost: Salary * Allocation * Active Months
-        const avgAllocation = periodProjectPlans.rows.reduce((sum, p) => sum + (Number(p.allocation_percentage) || 0), 0);
-        const totalPeriodCost = (monthlySalary * (avgAllocation / 100)) * activeMonthsCount;
 
         const timelineData = isDaily ? days : (isWeekly ? weeks : months);
 
@@ -180,16 +184,17 @@ router.get('/:id/performance', async (req, res) => {
             // Revenue Recognition
             logsForItem.forEach(log => {
                 if (log.billing_type === 'Fixed Bid') {
-                    const hourlyProjectValueINR = log.budgeted_hours > 0 ? (Number(log.fixed_contract_value) * 83.15) / Number(log.budgeted_hours) : 0;
+                    const logDate = new Date(log.date);
+                    const dynamicHours = getBusinessHoursInMonth(logDate.getFullYear(), logDate.getMonth());
+                    const hourlyProjectValueINR = dynamicHours > 0 ? Number(log.quoted_bid_value) / dynamicHours : 0;
                     revenue += Number(log.hours_worked) * hourlyProjectValueINR;
                 } else {
                     revenue += Number(log.hours_worked) * (Number(log.tm_rate) || 0);
                 }
             });
 
-            // 3. Cost
-            const activeAllocation = periodProjectPlans.rows.reduce((sum, p) => sum + (Number(p.allocation_percentage) || 0), 0);
-            const cost = (monthlySalary * (activeAllocation / 100)) * periodMultiplier;
+            // 3. Cost (Single segment cost)
+            const cost = monthlySalary * periodMultiplier;
 
             let segmentProfit = 0;
             if (itemHours > 0) {
@@ -206,10 +211,29 @@ router.get('/:id/performance', async (req, res) => {
             };
         });
 
+        // Calculate Global Staff Cost using UI Date Filter (30-day Proration) clamped to joining_date
+        const jDate = new Date(empResult.rows[0].joining_date || '2026-02-01');
+        let actualStart = new Date(start);
+        const actualEnd = new Date(end);
+        
+        if (actualStart < jDate) {
+            actualStart = jDate;
+        }
+        
+        let daysActive = 0;
+        if (actualEnd >= actualStart) {
+            const differenceMs = (actualEnd.getTime() - actualStart.getTime());
+            daysActive = differenceMs / (1000 * 60 * 60 * 24);
+        }
+
+        const periodStaffCost = (daysActive / 30) * monthlySalary;
+        const totalProfitContribution = totalRevenue - periodStaffCost;
+
         res.json({
             timeline,
-            totalProfitContribution: totalLogsInPeriod > 0 ? Math.round(totalRevenue - totalPeriodCost) : 0,
-            monthlyRate: Math.round(baselineCost)
+            totalProfitContribution: Math.round(totalProfitContribution),
+            periodStaffCost: Math.round(periodStaffCost),
+            currentBusinessHours: 160
         });
 
     } catch (err) {
@@ -268,16 +292,17 @@ router.get('/', async (req, res) => {
             const monthlySalary = Number(emp.monthly_salary) || 0;
 
             const logsData = await db.query(`
-                SELECT t.hours_worked, p.billing_type, p.fixed_contract_value, p.budgeted_hours
+                SELECT t.hours_worked, p.billing_type, p.quoted_bid_value
                 FROM timesheet_logs t
                 JOIN projects p ON t.project_id = p.id
                 WHERE t.employee_id = $1 AND t.date >= $2 AND t.date <= $3 AND t.approval_id IS NOT NULL
             `, [empId, tStart, tEnd]);
 
             let totalRevenue = 0;
+            const dynamicHours = getBusinessHoursInMonth(tStart.getFullYear(), tStart.getMonth());
             logsData.rows.forEach(log => {
                 if (log.billing_type === 'Fixed Bid') {
-                    const hourlyProjectValueINR = log.budgeted_hours > 0 ? (Number(log.fixed_contract_value) * 83.15) / Number(log.budgeted_hours) : 0;
+                    const hourlyProjectValueINR = dynamicHours > 0 ? Number(log.quoted_bid_value) / dynamicHours : 0;
                     totalRevenue += Number(log.hours_worked) * hourlyProjectValueINR;
                 } else {
                     totalRevenue += Number(log.hours_worked) * (Number(emp.usd_hourly_rate) || 0) * 83.15;
@@ -330,11 +355,11 @@ router.get('/', async (req, res) => {
 
 // POST /api/employees - Create employee
 router.post('/', async (req, res) => {
-    const { name, role, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate } = req.body;
+    const { name, role, joining_date, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate } = req.body;
     try {
         const result = await db.query(
-            'INSERT INTO employees (name, role, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-            [name, role, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate]
+            'INSERT INTO employees (name, role, joining_date, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+            [name, role, joining_date || '2026-02-01', monthly_salary, status, specialization, hourly_rate, usd_hourly_rate]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -346,11 +371,11 @@ router.post('/', async (req, res) => {
 // PUT /api/employees/:id - Update employee
 router.put('/:id', async (req, res) => {
     const { id } = req.params;
-    const { name, role, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate } = req.body;
+    const { name, role, joining_date, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate } = req.body;
     try {
         const result = await db.query(
-            'UPDATE employees SET name=$1, role=$2, monthly_salary=$3, status=$4, specialization=$5, hourly_rate=$6, usd_hourly_rate=$7 WHERE id=$8 RETURNING *',
-            [name, role, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate, id]
+            'UPDATE employees SET name=$1, role=$2, joining_date=$3, monthly_salary=$4, status=$5, specialization=$6, hourly_rate=$7, usd_hourly_rate=$8 WHERE id=$9 RETURNING *',
+            [name, role, joining_date || '2026-02-01', monthly_salary, status, specialization, hourly_rate, usd_hourly_rate, id]
         );
         res.json(result.rows[0]);
     } catch (err) {

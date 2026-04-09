@@ -112,11 +112,12 @@ router.get('/', async (req, res) => {
         const unapprovedLogsResult = await db.query(unapprovedLogsQuery);
         const unapprovedLogs = unapprovedLogsResult.rows;
 
-        // 4. Fetch Approved Timesheet Aggregates per Project/Employee for Tooltips
         const approvedLogsQuery = `
             SELECT 
                 t.project_id, 
                 t.employee_id, 
+                EXTRACT(MONTH FROM t.date) as log_month,
+                EXTRACT(YEAR FROM t.date) as log_year,
                 SUM(t.hours_worked) as total_hours,
                 SUM(t.hours_worked * e.hourly_rate) as total_inr_cost,
                 SUM(t.hours_worked * e.usd_hourly_rate * ta.usd_to_inr_rate) as total_inr_revenue,
@@ -124,7 +125,7 @@ router.get('/', async (req, res) => {
             FROM timesheet_logs t
             JOIN employees e ON t.employee_id = e.id
             JOIN timesheet_approvals ta ON t.approval_id = ta.id
-            GROUP BY t.project_id, t.employee_id
+            GROUP BY t.project_id, t.employee_id, EXTRACT(MONTH FROM t.date), EXTRACT(YEAR FROM t.date)
         `;
         const approvedLogsResult = await db.query(approvedLogsQuery);
         const approvedLogs = approvedLogsResult.rows;
@@ -149,7 +150,7 @@ router.get('/', async (req, res) => {
 
 // POST /api/projects - Create a new project with resources in a transaction
 router.post('/', async (req, res) => {
-    const { clientId, name, type, revenue, costs, startDate, deadline, status, billingType, fixedContractValue, resources, budgetedHours } = req.body;
+    const { clientId, name, type, revenue, costs, startDate, deadline, status, billingType, fixedContractValue, quotedBidValue, resources, budgetedHours } = req.body;
     
     const client = await db.pool.connect();
     
@@ -160,13 +161,13 @@ router.post('/', async (req, res) => {
         const projectResult = await client.query(
             `INSERT INTO projects (
                 client_id, name, type, revenue_earned, employee_costs, 
-                start_date, deadline, status, billing_type, fixed_contract_value, budgeted_hours
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+                start_date, deadline, status, billing_type, fixed_contract_value, quoted_bid_value, budgeted_hours
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
             [
                 clientId, name, type, revenue || 0, costs || 0, 
                 startDate || new Date().toISOString().split('T')[0], 
                 deadline || null, status || 'Active', billingType || 'T&M', 
-                fixedContractValue || 0, budgetedHours || 0
+                fixedContractValue || 0, quotedBidValue || 0, budgetedHours || 0
             ]
         );
         
