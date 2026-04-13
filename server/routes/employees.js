@@ -104,6 +104,8 @@ router.get('/:id/performance', async (req, res) => {
                 p.quoted_bid_value,
                 p.budgeted_hours,
                 p.status as project_status,
+                p.start_date,
+                p.deadline,
                 t.hours_worked,
                 COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate as tm_rate,
                 prp.allocation_percentage,
@@ -117,40 +119,48 @@ router.get('/:id/performance', async (req, res) => {
               AND t.date >= $2
               AND t.date <= $3
               AND t.approval_id IS NOT NULL
+              AND p.billing_type != 'Fixed Bid'
         `;
         const logsResult = await db.query(logsQuery, [empId, start, end]);
 
-        // Calculate Project-Level Aggregates for Fixed Bid Progress Override
-        const projectHoursMap = {};
-        logsResult.rows.forEach(log => {
-            if (!projectHoursMap[log.project_id]) {
-                projectHoursMap[log.project_id] = { 
-                    totalLoggedHours: 0, 
-                    status: log.project_status, 
-                    quotedBid: Number(log.quoted_bid_value || 0), 
-                    budgetedHours: Number(log.budgeted_hours || 0) 
-                };
-            }
-            projectHoursMap[log.project_id].totalLoggedHours += Number(log.hours_worked || 0);
-        });
+        const fixedBidQuery = `
+            SELECT prp.*, p.billing_type, p.quoted_bid_value, p.status as project_status, p.start_date, p.deadline
+            FROM project_resource_plans prp
+            JOIN projects p ON prp.project_id = p.id
+            WHERE prp.employee_id = $1 AND p.billing_type = 'Fixed Bid'
+        `;
+        const fixedBidPlansResult = await db.query(fixedBidQuery, [empId]);
+        const fixedBidPlans = fixedBidPlansResult.rows;
 
-        // 4. Calculate Total Revenue using Milestone Logic
+        // 4. Calculate Total Revenue
         let totalRevenue = 0;
         
-        logsResult.rows.forEach(log => {
-            if (log.billing_type === 'Fixed Bid') {
-                const projAgg = projectHoursMap[log.project_id];
-                if (projAgg.status === 'Completed' || projAgg.totalLoggedHours >= 160) {
-                    // Fractional scaling locked to 100% quoted bid distribution mapped per log
-                    const fraction = Number(log.hours_worked) / Math.max(1, projAgg.totalLoggedHours);
-                    totalRevenue += fraction * projAgg.quotedBid;
-                } else if (projAgg.budgetedHours > 0) {
-                    const hourlyProjectValueINR = projAgg.quotedBid / projAgg.budgetedHours;
-                    totalRevenue += Number(log.hours_worked) * hourlyProjectValueINR;
-                }
-            } else {
-                totalRevenue += Number(log.hours_worked) * (Number(log.tm_rate) || 0);
+        // Add Fixed Bid Revenue natively based on UI duration bounds
+        fixedBidPlans.forEach(plan => {
+            const planStart = new Date(plan.start_date || new Date());
+            const planEnd = new Date(plan.deadline || new Date());
+            const totalDurationMonths = Math.max(1, (planEnd.getFullYear() - planStart.getFullYear()) * 12 + (planEnd.getMonth() - planStart.getMonth()) + 1);
+            const monthlyRevenue = Number(plan.quoted_bid_value || 0) / totalDurationMonths;
+
+            const uiStart = start;
+            const uiEnd = end;
+
+            const overlapStart = planStart > uiStart ? planStart : uiStart;
+            const overlapEnd = planEnd < uiEnd ? planEnd : uiEnd;
+
+            let applicableMonths = 0;
+            if (overlapEnd >= overlapStart) {
+                const diffTime = Math.abs(overlapEnd - overlapStart);
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                applicableMonths = diffDays / 30;
             }
+            const fraction = Number(plan.allocation_percentage || 100) / 100;
+            totalRevenue += (monthlyRevenue * applicableMonths) * fraction;
+        });
+
+        // Add T&M Revenue natively from logged timesheets
+        logsResult.rows.forEach(log => {
+            totalRevenue += Number(log.hours_worked) * (Number(log.tm_rate) || 0);
         });
 
         const timelineData = isDaily ? days : (isWeekly ? weeks : months);
@@ -173,7 +183,7 @@ router.get('/:id/performance', async (req, res) => {
                 });
             }
 
-            const itemHours = logsForItem.reduce((sum, l) => sum + (Number(l.hours_worked) || 0), 0);
+            let itemHours = logsForItem.reduce((sum, l) => sum + (Number(l.hours_worked) || 0), 0);
 
             // Timeline segment costs: use pro-rata only for the VIZ, but the TOTAL will match the dashboard.
             // However, user said: "In each timeline point ... if no hours are logged ... ensure net contribution doesn't go negative".
@@ -181,16 +191,45 @@ router.get('/:id/performance', async (req, res) => {
             if (isDaily) periodMultiplier = 1/30;
             else if (isWeekly) periodMultiplier = 7/30;
 
-            // Revenue Recognition
-            logsForItem.forEach(log => {
-                if (log.billing_type === 'Fixed Bid') {
-                    const logDate = new Date(log.date);
-                    const dynamicHours = getBusinessHoursInMonth(logDate.getFullYear(), logDate.getMonth());
-                    const hourlyProjectValueINR = dynamicHours > 0 ? Number(log.quoted_bid_value) / dynamicHours : 0;
-                    revenue += Number(log.hours_worked) * hourlyProjectValueINR;
-                } else {
-                    revenue += Number(log.hours_worked) * (Number(log.tm_rate) || 0);
+            // Graph Matrix: Calculate Fixed Bid Linear mapping specific to THIS isolated timeline bound
+            let linearBoundStart, linearBoundEnd;
+            if (isDaily) {
+                linearBoundStart = new Date(`${item.dateStr}T00:00:00`);
+                linearBoundEnd = new Date(`${item.dateStr}T23:59:59`);
+            } else if (isWeekly) {
+                linearBoundStart = item.startDate;
+                linearBoundEnd = item.endDate;
+            } else {
+                linearBoundStart = new Date(item.yearNum, item.monthNum - 1, 1);
+                linearBoundEnd = new Date(item.yearNum, item.monthNum, 0, 23, 59, 59);
+            }
+
+            fixedBidPlans.forEach(plan => {
+                const planStart = new Date(plan.start_date || new Date());
+                const planEnd = new Date(plan.deadline || new Date());
+
+                const overlapStart = planStart > linearBoundStart ? planStart : linearBoundStart;
+                const overlapEnd = planEnd < linearBoundEnd ? planEnd : linearBoundEnd;
+
+                if (overlapEnd >= overlapStart) {
+                    const totalDurationMonths = Math.max(1, (planEnd.getFullYear() - planStart.getFullYear()) * 12 + (planEnd.getMonth() - planStart.getMonth()) + 1);
+                    const monthlyRevenue = Number(plan.quoted_bid_value || 0) / totalDurationMonths;
+                    
+                    const fraction = Number(plan.allocation_percentage || 100) / 100;
+                    
+                    // Specific calendar mathematical extraction (30 days division standard)
+                    const diffTime = Math.abs(overlapEnd - overlapStart);
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+                    const monthFractionInNode = diffDays / 30;
+
+                    revenue += (monthlyRevenue * monthFractionInNode) * fraction;
+                    itemHours += 1; // Ghost injection for logic parsing
                 }
+            });
+
+            // T&M Log processing into graph node
+            logsForItem.forEach(log => {
+                revenue += Number(log.hours_worked) * (Number(log.tm_rate) || 0);
             });
 
             // 3. Cost (Single segment cost)
@@ -244,7 +283,7 @@ router.get('/:id/performance', async (req, res) => {
 
 // GET /api/employees - List employees
 router.get('/', async (req, res) => {
-    const { search, status, specialization, projectId, page = 1, limit = 50 } = req.query;
+    const { search, status, specialization, projectId, startDate, endDate, page = 1, limit = 50 } = req.query;
     const offset = (page - 1) * limit;
     const queryParams = [];
     let whereClause = 'WHERE 1=1';
@@ -281,11 +320,13 @@ router.get('/', async (req, res) => {
         const dataRes = await db.query(dataQuery, [...queryParams, limit, offset]);
         const employees = dataRes.rows;
 
-        // Calculate Asset Status for each employee (This Month default)
-        const tStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-        const tEnd = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0, 23, 59, 59);
-        const tStartStr = tStart.toISOString().split('T')[0];
-        const tEndStr = tEnd.toISOString().split('T')[0];
+        let tStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+        let tEnd = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0, 23, 59, 59);
+
+        if (startDate && endDate) {
+            tStart = new Date(`${startDate}T00:00:00`);
+            tEnd = new Date(`${endDate}T23:59:59`);
+        }
 
         const enhancedEmployees = await Promise.all(employees.map(async (emp) => {
             const empId = emp.id;
@@ -296,34 +337,58 @@ router.get('/', async (req, res) => {
                 FROM timesheet_logs t
                 JOIN projects p ON t.project_id = p.id
                 WHERE t.employee_id = $1 AND t.date >= $2 AND t.date <= $3 AND t.approval_id IS NOT NULL
+                AND p.billing_type != 'Fixed Bid'
             `, [empId, tStart, tEnd]);
 
             let totalRevenue = 0;
-            const dynamicHours = getBusinessHoursInMonth(tStart.getFullYear(), tStart.getMonth());
+            // Native T&M revenue loop
             logsData.rows.forEach(log => {
-                if (log.billing_type === 'Fixed Bid') {
-                    const hourlyProjectValueINR = dynamicHours > 0 ? Number(log.quoted_bid_value) / dynamicHours : 0;
-                    totalRevenue += Number(log.hours_worked) * hourlyProjectValueINR;
-                } else {
-                    totalRevenue += Number(log.hours_worked) * (Number(emp.usd_hourly_rate) || 0) * 83.15;
-                }
+                totalRevenue += Number(log.hours_worked) * (Number(emp.usd_hourly_rate) || 0) * 83.15;
             });
 
+            // Native Fixed Bid revenue query and scaling
             const plansForStatus = await db.query(`
-                SELECT prp.*, p.billing_type
+                SELECT prp.*, p.billing_type, p.quoted_bid_value, p.start_date as proj_start, p.deadline as proj_deadline, p.status as project_status
                 FROM project_resource_plans prp
                 JOIN projects p ON prp.project_id = p.id
-                WHERE prp.employee_id = $1
-                AND (prp.start_date <= $3 OR prp.start_date IS NULL)
-                AND (prp.end_date >= $2 OR prp.end_date IS NULL)
-            `, [empId, tStart, tEnd]);
+                WHERE prp.employee_id = $1 AND p.billing_type = 'Fixed Bid'
+            `, [empId]);
 
-            const activeMonths = getActiveMonthsForEmployee(empId, tStartStr, tEndStr, plansForStatus.rows, []); 
+            plansForStatus.rows.forEach(plan => {
+                const planStart = new Date(plan.proj_start || new Date());
+                const planEnd = new Date(plan.proj_deadline || new Date());
+                const totalDurationMonths = Math.max(1, (planEnd.getFullYear() - planStart.getFullYear()) * 12 + (planEnd.getMonth() - planStart.getMonth()) + 1);
+                const monthlyRevenue = Number(plan.quoted_bid_value || 0) / totalDurationMonths;
+
+                const overlapStart = planStart > tStart ? planStart : tStart;
+                const overlapEnd = planEnd < tEnd ? planEnd : tEnd;
+
+                let applicableMonths = 0;
+                if (overlapEnd >= overlapStart) {
+                    const diffTime = Math.abs(overlapEnd - overlapStart);
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                    applicableMonths = diffDays / 30;
+                }
+                const fraction = Number(plan.allocation_percentage || 100) / 100;
+                totalRevenue += (monthlyRevenue * applicableMonths) * fraction;
+            });
+
+            const jDate = new Date(emp.joining_date || '2026-02-01');
+            let actualStart = new Date(tStart);
+            if (actualStart < jDate) {
+                actualStart = jDate;
+            }
+            
+            let daysActive = 0;
+            if (tEnd >= actualStart) {
+                daysActive = (tEnd.getTime() - actualStart.getTime()) / (1000 * 60 * 60 * 24);
+            }
+            const expectedCost = (daysActive / 30) * monthlySalary;
 
             let asset_status = 'LIABILITY';
             let status_color = 'red';
 
-            if (totalRevenue > (monthlySalary * Math.max(1, activeMonths))) {
+            if (totalRevenue > expectedCost) {
                 asset_status = 'ASSET';
                 status_color = 'green';
             } else {

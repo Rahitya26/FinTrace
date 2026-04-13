@@ -37,6 +37,7 @@ router.get('/summary', async (req, res) => {
         role: emp.role,
         totalCost: 0,
         revenueGenerated: 0,
+        byType: {},
         monthlySalary: Math.round(Number(emp.monthly_salary) || 0)
       };
     });
@@ -146,7 +147,7 @@ router.get('/summary', async (req, res) => {
     });
 
     approvedLogs.forEach(agg => {
-        if (employeeHoursMap[agg.employee_id]) {
+        if (agg.billing_type !== 'Fixed Bid' && employeeHoursMap[agg.employee_id]) {
             const hrs = Number(agg.total_hours) || 0;
             const bType = agg.billing_type || 'T&M';
             employeeHoursMap[agg.employee_id].totalHours += hrs;
@@ -165,20 +166,57 @@ router.get('/summary', async (req, res) => {
 
         const hourlyInternalRate = salary / 160;
 
-        const empMap = employeeHoursMap[emp.id];
-        if (empMap && empMap.totalHours > 0) {
-            for (const bType in empMap.byType) {
-                const hrs = empMap.byType[bType];
-                const allocatedCost = hrs * hourlyInternalRate;
-                
+        // 1. Assign Costs Based on Flat Allocations (Universal for T&M and Fixed Bid)
+        const empPlans = allPlans.filter(p => Number(p.employee_id) === Number(emp.id));
+        empPlans.forEach(plan => {
+            const project = projects.find(prj => prj.id === plan.project_id);
+            if (!project) return;
+            const bType = project.billing_type || 'T&M';
+
+            const alloc = Number(plan.allocation_percentage) || 100;
+            const fraction = alloc / 100;
+
+            const planStart = plan.start_date ? new Date(plan.start_date) : new Date(startDate || new Date().getFullYear(), 0, 1);
+            let planEnd = plan.end_date ? new Date(plan.end_date) : new Date(endDate || new Date());
+            
+            // Allow overdue plans to accrue cost right up to today/UI limits
+            const today = new Date();
+            if (project.status === 'Active' && planEnd < today) {
+                planEnd = today;
+            }
+
+            let uiStart = startDate ? new Date(startDate) : new Date(new Date().getFullYear(), 0, 1);
+            let uiEnd = endDate ? new Date(endDate) : new Date();
+
+            let jDate = new Date(emp.joining_date || '2026-02-01');
+            uiStart = uiStart < jDate ? jDate : uiStart;
+
+            let overlapStart = planStart > uiStart ? planStart : uiStart;
+            let overlapEnd = planEnd < uiEnd ? planEnd : uiEnd;
+
+            let activePlanFraction = 0;
+            if (overlapEnd >= overlapStart) {
+                const diffTime = Math.abs(overlapEnd - overlapStart);
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                activePlanFraction = diffDays / 30;
+            }
+
+            const allocatedCost = fraction * salary * activePlanFraction;
+            
+            if (allocatedCost > 0) {
                 totalProjectCosts += allocatedCost;
-                
                 if (!processTypeBreakdownMap[bType]) {
                     processTypeBreakdownMap[bType] = { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 };
                 }
                 processTypeBreakdownMap[bType].cost += allocatedCost;
+
+                if (!employeeCostMap[emp.id]) employeeCostMap[emp.id] = { id: emp.id, name: emp.name, totalCost: 0, byType: {}, benchCost: 0, role: emp.role };
+                
+                employeeCostMap[emp.id].totalCost += allocatedCost;
+                if (!employeeCostMap[emp.id].byType[bType]) employeeCostMap[emp.id].byType[bType] = 0;
+                employeeCostMap[emp.id].byType[bType] += allocatedCost;
             }
-        }
+        });
     });
 
     // Update margin for each process type after pro-rata cost calculation

@@ -18,14 +18,26 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
     // 2. Determine Total Project Revenue for the SELECTED PERIOD
     let computedRevenue = 0;
     if (isFixedBid) {
-        if (project.status === 'Completed' || periodProjectHours >= 160) {
-            computedRevenue = Number(project.quoted_bid_value || 0);
-        } else if (project.budgeted_hours > 0) {
-            const hourlyProjectValueINR = Number(project.quoted_bid_value || 0) / Number(project.budgeted_hours);
-            projectApprovedAggregates.forEach(agg => {
-                computedRevenue += (Number(agg.total_hours) || 0) * hourlyProjectValueINR;
-            });
+        const totalBid = Number(project.quoted_bid_value || 0);
+        const pStart = new Date(project.start_date || new Date());
+        const pEnd = new Date(project.deadline || new Date());
+        
+        const totalDurationMonths = Math.max(1, (pEnd.getFullYear() - pStart.getFullYear()) * 12 + (pEnd.getMonth() - pStart.getMonth()) + 1);
+        const monthlyRevenue = totalBid / totalDurationMonths;
+
+        let uiStart = startDate ? new Date(startDate) : new Date(new Date().getFullYear(), 0, 1);
+        let uiEnd = endDate ? new Date(endDate) : new Date();
+
+        let overlapStart = pStart > uiStart ? pStart : uiStart;
+        let overlapEnd = pEnd < uiEnd ? pEnd : uiEnd;
+
+        let applicableMonths = 0;
+        if (overlapEnd >= overlapStart) {
+            const diffTime = Math.abs(overlapEnd - overlapStart);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            applicableMonths = diffDays / 30;
         }
+        computedRevenue = monthlyRevenue * applicableMonths;
     } else {
         projectApprovedAggregates.forEach(agg => {
             computedRevenue += Number(agg.total_inr_revenue) || 0;
@@ -57,14 +69,9 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
 
             // 2. Revenue Recognition
             if (isFixedBid) {
-                if (project.status === 'Completed' || periodProjectHours >= 160) {
-                    approvedRevenue = (periodHours / Math.max(1, periodProjectHours)) * Number(project.quoted_bid_value || 0);
-                } else if (project.budgeted_hours > 0) {
-                    const hourlyProjectValueINR = Number(project.quoted_bid_value || 0) / Number(project.budgeted_hours);
-                    approvedRevenue = periodHours * hourlyProjectValueINR;
-                } else {
-                    approvedRevenue = 0;
-                }
+                const totalAlloc = totalAllocationOnProject > 0 ? totalAllocationOnProject : 100;
+                const weight = (Number(plan.allocation_percentage) || 0) / totalAlloc;
+                approvedRevenue = computedRevenue * weight;
             } else {
                 approvedRevenue = empProjectLogs.reduce((sum, log) => sum + (Number(log.total_inr_revenue) || 0), 0);
             }
@@ -78,28 +85,32 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
                 status_color = 'red';
             }
 
-            // 3. Burn Calculation: Pro-Rata Loop Per Month
-            let planBurn = 0;
-            empProjectLogs.forEach(projLog => {
-                const month = projLog.log_month;
-                const year = projLog.log_year;
-                const hoursThisMonth = Number(projLog.total_hours) || 0;
+            // 3. Burn Calculation: Assignment Pro-Rata Loop
+            const alloc = Number(plan.allocation_percentage) || 100;
+            const fraction = alloc / 100;
 
-                const employeeAllLogsThisMonth = allApprovedLogs.filter(a => 
-                    Number(a.employee_id) === Number(empId) && 
-                    Number(a.log_month) === Number(month) && 
-                    Number(a.log_year) === Number(year)
-                );
+            const planStart = plan.start_date ? new Date(plan.start_date) : new Date(startDate || new Date().getFullYear(), 0, 1);
+            let planEnd = plan.end_date ? new Date(plan.end_date) : new Date(endDate || new Date());
+            
+            const today = new Date();
+            if (project.status === 'Active' && planEnd < today) {
+                planEnd = today;
+            }
 
-                const totalGlobalHoursThisMonth = employeeAllLogsThisMonth.reduce(
-                    (sum, log) => sum + (Number(log.total_hours) || 0), 0
-                );
+            let uiStart = startDate ? new Date(startDate) : new Date(new Date().getFullYear(), 0, 1);
+            let uiEnd = endDate ? new Date(endDate) : new Date();
 
-                if (totalGlobalHoursThisMonth > 0) {
-                    const ratio = hoursThisMonth / totalGlobalHoursThisMonth;
-                    planBurn += ratio * monthlySalary; 
-                }
-            });
+            let overlapStart = planStart > uiStart ? planStart : uiStart;
+            let overlapEnd = planEnd < uiEnd ? planEnd : uiEnd;
+
+            let activePlanFraction = 0;
+            if (overlapEnd >= overlapStart) {
+                const diffTime = Math.abs(overlapEnd - overlapStart);
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                activePlanFraction = diffDays / 30;
+            }
+
+            let planBurn = fraction * monthlySalary * activePlanFraction;
             totalLockedStaffBurn += planBurn;
 
             const hourlyProjectValueUSD = (isFixedBid && project.budgeted_hours > 0) 
