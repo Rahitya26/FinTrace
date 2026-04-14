@@ -112,61 +112,67 @@ const calculateFixedBidRevenueShare = (plan, periodStart, periodEnd) => {
 };
 
 const calculateLinearRevenue = (totalValue, projectStart, projectEnd, filterStart, filterEnd, joiningDate, allocationPercentage = 100, empName = 'Employee') => {
-    const pStart = toLocalDate(projectStart);
-    const pEnd = toLocalDate(projectEnd);
-    const fStart = toLocalDate(filterStart);
-    const fEnd = toLocalDate(filterEnd);
-    
-    // Decoupling Check: If no joiningDate provided, we assume company view (unrestricted)
-    const jDate = joiningDate ? toLocalDate(joiningDate) : new Date(1970, 0, 1);
+    try {
+        const pStart = toLocalDate(projectStart);
+        const pEnd = toLocalDate(projectEnd);
+        // FALLBACK: If no filter provided, use project range as the "filter"
+        const fStart = toLocalDate(filterStart) || pStart;
+        const fEnd = toLocalDate(filterEnd) || pEnd;
+        
+        const jDate = joiningDate ? toLocalDate(joiningDate) : new Date(1970, 0, 1);
 
-    if (!pStart || !pEnd || !fStart || !fEnd) return 0;
+        if (!pStart || !pEnd || !fStart || !fEnd) return 0;
 
-    // 1. Total project duration in months (the denominator)
-    const totalDurationMonths = Math.max(1, (pEnd.getFullYear() - pStart.getFullYear()) * 12 + (pEnd.getMonth() - pStart.getMonth()) + 1);
-    const monthlyRevenue = (Number(totalValue) || 0) / totalDurationMonths;
+        const totalDurationMonths = Math.max(1, (pEnd.getFullYear() - pStart.getFullYear()) * 12 + (pEnd.getMonth() - pStart.getMonth()) + 1);
+        const monthlyRevenue = (Number(totalValue) || 0) / totalDurationMonths;
 
-    // 2. Revenue Recognition Start = MAX(project_start, filter_start, joining_date)
-    const overlapStart = new Date(Math.max(pStart.getTime(), fStart.getTime(), jDate.getTime()));
-    const overlapEnd = pEnd < fEnd ? pEnd : fEnd;
+        const overlapStart = new Date(Math.max(pStart.getTime(), fStart.getTime(), jDate.getTime()));
+        const overlapEnd = new Date(Math.min(pEnd.getTime(), fEnd.getTime()));
 
-    let revenue = 0;
-    if (overlapEnd >= overlapStart) {
-        const diffTime = Math.abs(overlapEnd - overlapStart);
-        // Precision: Math.ceil with T23:59:59 boundary ensures April 1-14 is exactly 14 days.
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-        const fraction = diffDays / 30;
-        revenue = (monthlyRevenue * fraction) * (Number(allocationPercentage || 100) / 100);
+        if (overlapEnd >= overlapStart) {
+            const diffTime = Math.abs(overlapEnd - overlapStart);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+            const revenue = (monthlyRevenue / 30) * diffDays * (Number(allocationPercentage || 100) / 100);
 
-        if (empName.includes("John Wick")) {
-            console.log(`Calculating ${empName} Revenue: Start ${overlapStart.toDateString()}, End ${overlapEnd.toDateString()}, Days: ${diffDays}, Revenue: ${Math.round(revenue)}`);
+            if (empName.includes("John Wick")) {
+                console.log(`Calculating ${empName} Revenue: Start ${overlapStart.toDateString()}, End ${overlapEnd.toDateString()}, Days: ${diffDays}, Revenue: ${Math.round(revenue)}`);
+            }
+            return revenue;
         }
-    }
-    return revenue;
-};
-
-const calculateStaffCost = (salary, start, end, joiningDate, empName = 'Employee') => {
-    const s = toLocalDate(start);
-    const e = toLocalDate(end);
-    const j = toLocalDate(joiningDate) || new Date(2026, 1, 1);
-
-    if (!s || !e) return 0;
-
-    const effectiveStart = s < j ? j : s;
-
-    if (e >= effectiveStart) {
-        const diffTime = Math.abs(e - effectiveStart);
-        // Standardized Daily Pro-rata: (Salary / 30) * Days
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        const cost = (Number(salary) || 0) * (diffDays / 30);
-
-        if (empName.includes("John Wick")) {
-            console.log(`Calculating ${empName} Salary: Start ${effectiveStart.toDateString()}, End ${e.toDateString()}, Days: ${diffDays}, Cost: ${Math.round(cost)}`);
-        }
-        return cost;
+    } catch (e) {
+        console.error("Error in calculateLinearRevenue:", e);
     }
     return 0;
 };
+
+const calculateStaffCost = (salary, start, end, joiningDate, empName = 'Employee') => {
+    try {
+        const s = toLocalDate(start);
+        const e = toLocalDate(end);
+        const j = toLocalDate(joiningDate) || new Date(2026, 0, 1);
+
+        if (!s || !e) return 0;
+
+        // Salary costs only start from the joining date
+        const effectiveStart = s < j ? j : s;
+
+        if (e >= effectiveStart) {
+            const diffTime = Math.abs(e - effectiveStart);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            const cost = (Number(salary) || 0) * (diffDays / 30);
+
+            if (empName.includes("John Wick")) {
+                console.log(`Calculating ${empName} Salary: Start ${effectiveStart.toDateString()}, End ${e.toDateString()}, Days: ${diffDays}, Cost: ${Math.round(cost)}`);
+            }
+            return cost;
+        }
+    } catch (err) {
+        console.error("Error in calculateStaffCost:", err);
+    }
+    return 0;
+};
+
+
 
 module.exports = {
     getMonthsInPeriod,

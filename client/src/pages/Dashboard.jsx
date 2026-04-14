@@ -156,7 +156,7 @@ const Dashboard = () => {
                             name="startDate"
                             value={dateRange.startDate}
                             onChange={handleDateChange}
-                            className="text-sm border-none focus:ring-0 text-slate-600 dark:text-slate-300 bg-transparent dark:[color-scheme:dark] p-0 w-[110px]"
+                            className="text-sm border-none focus:ring-0 text-slate-600 dark:text-white bg-slate-50 dark:bg-slate-800 rounded-md px-2 py-1 dark:[color-scheme:dark] w-[130px]"
                         />
                         <span className="text-slate-300 dark:text-slate-600">|</span>
                         <input
@@ -164,7 +164,7 @@ const Dashboard = () => {
                             name="endDate"
                             value={dateRange.endDate}
                             onChange={handleDateChange}
-                            className="text-sm border-none focus:ring-0 text-slate-600 dark:text-slate-300 bg-transparent dark:[color-scheme:dark] p-0 w-[110px]"
+                            className="text-sm border-none focus:ring-0 text-slate-600 dark:text-white bg-slate-50 dark:bg-slate-800 rounded-md px-2 py-1 dark:[color-scheme:dark] w-[130px]"
                         />
                         {/* Clear Button */}
                         {(dateRange.startDate || dateRange.endDate) && (
@@ -403,7 +403,9 @@ const Dashboard = () => {
                         {/* Header */}
                         <div className="p-6 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/50">
                             <div>
-                                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Staff Costs Breakdown</h2>
+                                <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+                                    Staff Costs Breakdown {activePreset && activePreset !== 'month' ? '(Period)' : ''}
+                                </h2>
                                 <p className="text-sm text-slate-500 dark:text-slate-400">Comprehensive view of resource consumption</p>
                             </div>
                             <button
@@ -476,12 +478,12 @@ const Dashboard = () => {
                             {/* Employee List */}
                             <section>
                                 <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
-                                    <Activity className="w-4 h-4 mr-2" /> Employee Cost Breakdown (Month)
+                                    <Activity className="w-4 h-4 mr-2" /> Employee Cost Breakdown {activePreset && activePreset !== 'month' ? '(Period)' : '(Month)'}
                                 </h3>
                                 <div className="grid grid-cols-1 gap-4">
                                     {(stats.employeeCostList || []).map((emp) => {
                                         const r = emp.revenueGenerated || 0;
-                                        const s = emp.monthlySalary || 0;
+                                        const s = emp.totalCost || 0;
                                         const hasActivity = emp.totalCost > 0;
                                         
                                         let statusColor = "text-slate-900 dark:text-white";
@@ -516,15 +518,24 @@ const Dashboard = () => {
                                                     </div>
                                                 </div>
 
-                                                <div className="flex items-center gap-12">
-                                                    <div className="text-right">
-                                                        <p className="text-xs text-slate-400 uppercase font-medium">Monthly Salary</p>
+                                                <div className="flex items-center gap-12 group">
+                                                    <div className="text-right min-w-[120px]">
+                                                        <p className="text-xs text-slate-400 uppercase font-medium">Period Salary Cost</p>
                                                         <p className="font-semibold text-slate-600 dark:text-slate-300 tabular-nums">{formatCurrency(s)}</p>
                                                     </div>
-                                                    <div className="text-right min-w-[180px]">
-                                                        <p className="text-xs text-slate-400 uppercase font-medium">Monthly Revenue Generated</p>
-                                                        <p className={cn("text-xl font-black tabular-nums", statusColor)}>
+                                                    <div className="text-right min-w-[150px]">
+                                                        <p className="text-xs text-slate-400 uppercase font-medium">Period Revenue Generated</p>
+                                                        <p className={cn("text-lg font-bold tabular-nums", statusColor)}>
                                                             {formatCurrency(r)}
+                                                        </p>
+                                                    </div>
+                                                    <div className="text-right min-w-[150px] border-l border-slate-100 dark:border-slate-700 pl-8">
+                                                        <p className="text-xs text-slate-400 uppercase font-medium">Profit Contribution</p>
+                                                        <p className={cn(
+                                                            "text-xl font-black tabular-nums",
+                                                            r - s > 0 ? "text-emerald-500" : "text-red-500"
+                                                        )}>
+                                                            {formatCurrency(r - s)}
                                                         </p>
                                                     </div>
                                                 </div>

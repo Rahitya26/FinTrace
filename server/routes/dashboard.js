@@ -27,20 +27,6 @@ router.get('/summary', async (req, res) => {
     const projectsResult = await db.query(projectsQuery, queryParams);
     const projects = projectsResult.rows;
 
-    // 2. Fetch all employees to initialize the map
-    const allActiveEmployees = await db.query("SELECT id, name, role, joining_date, monthly_salary FROM employees WHERE organization_id = $1", [req.user.organizationId]);
-    const employeeCostMap = {};
-    allActiveEmployees.rows.forEach(emp => {
-      employeeCostMap[emp.id] = {
-        id: emp.id,
-        name: emp.name,
-        role: emp.role,
-        totalCost: 0,
-        revenueGenerated: 0,
-        byType: {},
-        monthlySalary: Math.round(Number(emp.monthly_salary) || 0)
-      };
-    });
 
     // 3. Fetch all resource plans for these employees
     const plansQuery = `
@@ -106,14 +92,39 @@ router.get('/summary', async (req, res) => {
       'Fixed Value': { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 }
     };
 
-    const employeeAllocationMap = {}; // To track total allocation per employee
+    // 2. Fetch all employees to initialize the map
+    const allActiveEmployees = await db.query("SELECT id, name, role, joining_date, monthly_salary FROM employees WHERE organization_id = $1", [req.user.organizationId]);
 
+    // Initialize Employee Map with FULL Period Salary (Company View)
+    const employeeCostMap = {};
+    allActiveEmployees.rows.forEach(emp => {
+        const periodSalary = calculateStaffCost(
+            emp.monthly_salary,
+            startDate || null, // fallback in utility
+            endDate || null,
+            emp.joining_date,
+            emp.name
+        );
+        employeeCostMap[emp.id] = {
+            id: emp.id,
+            name: emp.name,
+            role: emp.role,
+            totalCost: periodSalary, // Full period salary paid by company
+            revenueGenerated: 0,
+            byType: {},
+            monthlySalary: Math.round(Number(emp.monthly_salary) || 0)
+        };
+    });
+
+    // Process Projects to Aggregate Company View
     projects.forEach(project => {
       const calculated = calculateProjectFinancials(project, allPlans, unapprovedLogs, approvedLogs, historyLogs, startDate, endDate);
 
       const rev = Number(calculated.revenue_earned) || 0;
+      const cost = Number(calculated.employee_costs) || 0;
 
       totalRevenue += rev;
+      totalProjectCosts += cost;
 
       const type = project.billing_type || project.type || 'T&M';
       if (!processTypeBreakdownMap[type]) {
@@ -121,75 +132,25 @@ router.get('/summary', async (req, res) => {
       }
       processTypeBreakdownMap[type].count += 1;
       processTypeBreakdownMap[type].rev += rev;
-      // Note: processTypeBreakdownMap[type].cost will be calculated pro-rata later
+      processTypeBreakdownMap[type].cost += cost;
       processTypeBreakdownMap[type].projectedRev += (Number(calculated.projectedRevenue) || 0);
 
+      // Attribute Revenue to Employees
       if (calculated.debug_info?.plans) {
         calculated.debug_info.plans.forEach(plan => {
           if (employeeCostMap[plan.employee_id]) {
-            employeeCostMap[plan.employee_id].totalCost += plan.totalPlanCost || 0;
             employeeCostMap[plan.employee_id].revenueGenerated += plan.totalPlanRevenue || 0;
-            employeeCostMap[plan.employee_id].asset_status = plan.asset_status;
-            employeeCostMap[plan.employee_id].status_color = plan.status_color;
-
-            // Track allocation for bench calculation
-            employeeAllocationMap[plan.employee_id] = (employeeAllocationMap[plan.employee_id] || 0) + (Number(plan.allocation_percentage) || 0);
+            
+            if (!employeeCostMap[plan.employee_id].byType[type]) {
+                employeeCostMap[plan.employee_id].byType[type] = 0;
+            }
+            // Optional: track project-specific allocation cost if UI needs it
           }
         });
       }
     });
 
-    // 6. Calculate Total Payroll & Pro-Rata Staff Costs
-    let totalPayrollCost = 0;
-
-    allActiveEmployees.rows.forEach(emp => {
-      const salary = Number(emp.monthly_salary) || 0;
-      
-      // UNIFIED PRO-RATA: Use shared utility for payroll cost
-      totalPayrollCost += calculateStaffCost(
-        salary,
-        startDate || new Date(new Date().getFullYear(), 0, 1),
-        endDate || new Date(),
-        emp.joining_date,
-        emp.name
-      );
-
-      // 1. Assign Costs Based on Flat Allocations (Universal for T&M and Fixed Bid)
-      const empPlans = allPlans.filter(p => Number(p.employee_id) === Number(emp.id));
-      empPlans.forEach(plan => {
-        const project = projects.find(prj => prj.id === plan.project_id);
-        if (!project) return;
-        const bType = project.billing_type || 'T&M';
-
-        const alloc = Number(plan.allocation_percentage) || 100;
-        const fraction = alloc / 100;
-
-        // UNIFIED PRO-RATA: Use shared utility for project allocation cost
-        const allocatedCost = fraction * calculateStaffCost(
-          salary,
-          plan.start_date || startDate,
-          plan.end_date || endDate,
-          emp.joining_date,
-          emp.name
-        );
-
-        if (allocatedCost > 0) {
-          totalProjectCosts += allocatedCost;
-          if (!processTypeBreakdownMap[bType]) {
-            processTypeBreakdownMap[bType] = { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 };
-          }
-          processTypeBreakdownMap[bType].cost += allocatedCost;
-
-          if (!employeeCostMap[emp.id]) employeeCostMap[emp.id] = { id: emp.id, name: emp.name, totalCost: 0, byType: {}, benchCost: 0, role: emp.role };
-
-          employeeCostMap[emp.id].totalCost += allocatedCost;
-          if (!employeeCostMap[emp.id].byType[bType]) employeeCostMap[emp.id].byType[bType] = 0;
-          employeeCostMap[emp.id].byType[bType] += allocatedCost;
-        }
-      });
-    });
-
-    // Update margin for each process type after pro-rata cost calculation
+    // Final calculations
     Object.keys(processTypeBreakdownMap).forEach(type => {
       const t = processTypeBreakdownMap[type];
       t.margin = t.rev - t.cost;
@@ -200,27 +161,30 @@ router.get('/summary', async (req, res) => {
       ...processTypeBreakdownMap[type]
     }));
 
-    const employeeCostList = Object.values(employeeCostMap).sort((a, b) => b.totalCost - a.totalCost);
+    const employeeCostList = Object.values(employeeCostMap)
+        .filter(emp => emp.totalCost > 0 || emp.revenueGenerated > 0)
+        .sort((a, b) => b.totalCost - a.totalCost);
 
-    // 7. Bench Cost is now simply the unallocated portion of the payroll
+    // Total Payroll (Sum of all individual totalCosts)
+    const totalPayrollCost = Object.values(employeeCostMap).reduce((sum, emp) => sum + emp.totalCost, 0);
     const totalBenchCost = Math.max(0, totalPayrollCost - totalProjectCosts);
 
     // 8. Company Expenses
     const expensesResult = await db.query(`SELECT SUM(amount) as total_expenses FROM company_expenses ${expensesWhere} `, queryParams);
     const totalExpensesValue = Number(expensesResult.rows[0]?.total_expenses) || 0;
 
-    const finalStaffCost = totalPayrollCost;
-
     res.json({
       startDate: startDate || null,
       endDate: endDate || null,
       totalRevenue: Math.round(totalRevenue),
-      totalProjectCosts: Math.round(finalStaffCost),
+      totalProjectCosts: Math.round(totalPayrollCost), // Total Salary paid
+      totalAllocatedCosts: Math.round(totalProjectCosts), // sum of fractions
       totalBenchCost: Math.round(totalBenchCost),
       totalCompanyExpenses: Math.round(totalExpensesValue),
       processTypeBreakdown,
       employeeCostList
     });
+
 
   } catch (err) {
     console.error(err);

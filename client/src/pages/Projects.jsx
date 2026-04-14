@@ -97,8 +97,9 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
     }
 
     const totalLoggedHours = project.debug_info?.plans?.reduce((sum, p) => sum + (Number(p.totalHours) || 0), 0) || 0;
-    const budgetedHours = Number(project.budgeted_hours) || 0;
-    const burnPct = budgetedHours > 0 ? (totalLoggedHours / budgetedHours) * 100 : 0;
+    const budgetedValue = Number(project.quoted_bid_value) || 0;
+    const staffBurn = Number(project.employee_costs) || 0;
+    const burnPct = budgetedValue > 0 ? (staffBurn / budgetedValue) * 100 : 0;
 
     const visiblePlans = (project.debug_info?.plans || []).slice(0, 6);
     const hiddenCount = (project.debug_info?.plans || []).length - 6;
@@ -182,7 +183,7 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
                     <div className="flex justify-between items-center mb-1.5">
                         <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                             Budget Burn 
-                            <span className="opacity-70 lowercase ml-1 font-medium">({totalLoggedHours} / {budgetedHours} hrs)</span>
+                            <span className="opacity-70 lowercase ml-1 font-medium">({formatCurrency(staffBurn)} / {formatCurrency(budgetedValue)})</span>
                         </span>
                         <span className={cn("text-[10px] font-extrabold uppercase", burnPct > 100 ? "text-red-600 dark:text-red-400" : burnPct > 80 ? "text-amber-600 dark:text-amber-500" : "text-slate-600 dark:text-slate-300")}>
                             {burnPct.toFixed(1)}%
