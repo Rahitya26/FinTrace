@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { getActiveMonthsForEmployee, toLocalDate, calculateFixedBidRevenueShare, getBusinessHoursInMonth } = require('../utils/financialUtils');
+const { getActiveMonthsForEmployee, toLocalDate, calculateFixedBidRevenueShare, getBusinessHoursInMonth, calculateLinearRevenue, calculateStaffCost } = require('../utils/financialUtils');
 
 // GET /api/employees/:id/performance
 router.get('/:id/performance', async (req, res) => {
@@ -10,12 +10,14 @@ router.get('/:id/performance', async (req, res) => {
 
     try {
         // 1. Get Employee Details
-        const empResult = await db.query('SELECT monthly_salary, joining_date FROM employees WHERE id = $1', [empId]);
+        const empResult = await db.query('SELECT monthly_salary, joining_date FROM employees WHERE id = $1 AND organization_id = $2', [empId, req.user.organizationId]);
         if (empResult.rows.length === 0) {
             return res.status(404).json({ error: 'Employee not found' });
         }
 
         const monthlySalary = Number(empResult.rows[0].monthly_salary) || 0;
+        const joiningDate = empResult.rows[0].joining_date || '2026-02-01';
+        const jDate = new Date(joiningDate);
         const baselineCost = monthlySalary;
 
         // 2. Determine Granularity (Weekly vs Daily vs Monthly)
@@ -120,16 +122,17 @@ router.get('/:id/performance', async (req, res) => {
               AND t.date <= $3
               AND t.approval_id IS NOT NULL
               AND p.billing_type != 'Fixed Bid'
+              AND t.organization_id = $4
         `;
-        const logsResult = await db.query(logsQuery, [empId, start, end]);
+        const logsResult = await db.query(logsQuery, [empId, start, end, req.user.organizationId]);
 
         const fixedBidQuery = `
             SELECT prp.*, p.billing_type, p.quoted_bid_value, p.status as project_status, p.start_date, p.deadline
             FROM project_resource_plans prp
             JOIN projects p ON prp.project_id = p.id
-            WHERE prp.employee_id = $1 AND p.billing_type = 'Fixed Bid'
+            WHERE prp.employee_id = $1 AND p.billing_type = 'Fixed Bid' AND prp.organization_id = $2
         `;
-        const fixedBidPlansResult = await db.query(fixedBidQuery, [empId]);
+        const fixedBidPlansResult = await db.query(fixedBidQuery, [empId, req.user.organizationId]);
         const fixedBidPlans = fixedBidPlansResult.rows;
 
         // 4. Calculate Total Revenue
@@ -137,25 +140,16 @@ router.get('/:id/performance', async (req, res) => {
         
         // Add Fixed Bid Revenue natively based on UI duration bounds
         fixedBidPlans.forEach(plan => {
-            const planStart = new Date(plan.start_date || new Date());
-            const planEnd = new Date(plan.deadline || new Date());
-            const totalDurationMonths = Math.max(1, (planEnd.getFullYear() - planStart.getFullYear()) * 12 + (planEnd.getMonth() - planStart.getMonth()) + 1);
-            const monthlyRevenue = Number(plan.quoted_bid_value || 0) / totalDurationMonths;
-
-            const uiStart = start;
-            const uiEnd = end;
-
-            const overlapStart = planStart > uiStart ? planStart : uiStart;
-            const overlapEnd = planEnd < uiEnd ? planEnd : uiEnd;
-
-            let applicableMonths = 0;
-            if (overlapEnd >= overlapStart) {
-                const diffTime = Math.abs(overlapEnd - overlapStart);
-                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                applicableMonths = diffDays / 30;
-            }
-            const fraction = Number(plan.allocation_percentage || 100) / 100;
-            totalRevenue += (monthlyRevenue * applicableMonths) * fraction;
+            totalRevenue += calculateLinearRevenue(
+                plan.quoted_bid_value,
+                plan.start_date,
+                plan.deadline,
+                start,
+                end,
+                empResult.rows[0].joining_date,
+                plan.allocation_percentage,
+                empResult.rows[0].name
+            );
         });
 
         // Add T&M Revenue natively from logged timesheets
@@ -205,26 +199,19 @@ router.get('/:id/performance', async (req, res) => {
             }
 
             fixedBidPlans.forEach(plan => {
-                const planStart = new Date(plan.start_date || new Date());
-                const planEnd = new Date(plan.deadline || new Date());
-
-                const overlapStart = planStart > linearBoundStart ? planStart : linearBoundStart;
-                const overlapEnd = planEnd < linearBoundEnd ? planEnd : linearBoundEnd;
-
-                if (overlapEnd >= overlapStart) {
-                    const totalDurationMonths = Math.max(1, (planEnd.getFullYear() - planStart.getFullYear()) * 12 + (planEnd.getMonth() - planStart.getMonth()) + 1);
-                    const monthlyRevenue = Number(plan.quoted_bid_value || 0) / totalDurationMonths;
-                    
-                    const fraction = Number(plan.allocation_percentage || 100) / 100;
-                    
-                    // Specific calendar mathematical extraction (30 days division standard)
-                    const diffTime = Math.abs(overlapEnd - overlapStart);
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-                    const monthFractionInNode = diffDays / 30;
-
-                    revenue += (monthlyRevenue * monthFractionInNode) * fraction;
-                    itemHours += 1; // Ghost injection for logic parsing
-                }
+                revenue += calculateLinearRevenue(
+                    plan.quoted_bid_value,
+                    plan.start_date,
+                    plan.deadline,
+                    linearBoundStart,
+                    linearBoundEnd,
+                    empResult.rows[0].joining_date,
+                    plan.allocation_percentage,
+                    empResult.rows[0].name
+                );
+                
+                // Ghost injection for logic parsing
+                if (revenue > 0) itemHours += 1;
             });
 
             // T&M Log processing into graph node
@@ -232,8 +219,14 @@ router.get('/:id/performance', async (req, res) => {
                 revenue += Number(log.hours_worked) * (Number(log.tm_rate) || 0);
             });
 
-            // 3. Cost (Single segment cost)
-            const cost = monthlySalary * periodMultiplier;
+            // 3. Cost (Single segment cost) - Standardized Pro-rata
+            const cost = calculateStaffCost(
+                monthlySalary,
+                linearBoundStart,
+                linearBoundEnd,
+                empResult.rows[0].joining_date,
+                empResult.rows[0].name
+            );
 
             let segmentProfit = 0;
             if (itemHours > 0) {
@@ -251,21 +244,13 @@ router.get('/:id/performance', async (req, res) => {
         });
 
         // Calculate Global Staff Cost using UI Date Filter (30-day Proration) clamped to joining_date
-        const jDate = new Date(empResult.rows[0].joining_date || '2026-02-01');
-        let actualStart = new Date(start);
-        const actualEnd = new Date(end);
-        
-        if (actualStart < jDate) {
-            actualStart = jDate;
-        }
-        
-        let daysActive = 0;
-        if (actualEnd >= actualStart) {
-            const differenceMs = (actualEnd.getTime() - actualStart.getTime());
-            daysActive = differenceMs / (1000 * 60 * 60 * 24);
-        }
-
-        const periodStaffCost = (daysActive / 30) * monthlySalary;
+        const periodStaffCost = calculateStaffCost(
+            monthlySalary,
+            start,
+            end,
+            empResult.rows[0].joining_date,
+            empResult.rows[0].name
+        );
         const totalProfitContribution = totalRevenue - periodStaffCost;
 
         res.json({
@@ -285,8 +270,8 @@ router.get('/:id/performance', async (req, res) => {
 router.get('/', async (req, res) => {
     const { search, status, specialization, projectId, startDate, endDate, page = 1, limit = 50 } = req.query;
     const offset = (page - 1) * limit;
-    const queryParams = [];
-    let whereClause = 'WHERE 1=1';
+    const queryParams = [req.user.organizationId];
+    let whereClause = 'WHERE e.organization_id = $1';
 
     if (search) {
         queryParams.push(`%${search}%`);
@@ -331,14 +316,15 @@ router.get('/', async (req, res) => {
         const enhancedEmployees = await Promise.all(employees.map(async (emp) => {
             const empId = emp.id;
             const monthlySalary = Number(emp.monthly_salary) || 0;
+            const jDate = new Date(emp.joining_date || '2026-02-01');
 
             const logsData = await db.query(`
                 SELECT t.hours_worked, p.billing_type, p.quoted_bid_value
                 FROM timesheet_logs t
                 JOIN projects p ON t.project_id = p.id
                 WHERE t.employee_id = $1 AND t.date >= $2 AND t.date <= $3 AND t.approval_id IS NOT NULL
-                AND p.billing_type != 'Fixed Bid'
-            `, [empId, tStart, tEnd]);
+                AND p.billing_type != 'Fixed Bid' AND t.organization_id = $4
+            `, [empId, tStart, tEnd, req.user.organizationId]);
 
             let totalRevenue = 0;
             // Native T&M revenue loop
@@ -351,39 +337,29 @@ router.get('/', async (req, res) => {
                 SELECT prp.*, p.billing_type, p.quoted_bid_value, p.start_date as proj_start, p.deadline as proj_deadline, p.status as project_status
                 FROM project_resource_plans prp
                 JOIN projects p ON prp.project_id = p.id
-                WHERE prp.employee_id = $1 AND p.billing_type = 'Fixed Bid'
-            `, [empId]);
+                WHERE prp.employee_id = $1 AND p.billing_type = 'Fixed Bid' AND prp.organization_id = $2
+            `, [empId, req.user.organizationId]);
 
             plansForStatus.rows.forEach(plan => {
-                const planStart = new Date(plan.proj_start || new Date());
-                const planEnd = new Date(plan.proj_deadline || new Date());
-                const totalDurationMonths = Math.max(1, (planEnd.getFullYear() - planStart.getFullYear()) * 12 + (planEnd.getMonth() - planStart.getMonth()) + 1);
-                const monthlyRevenue = Number(plan.quoted_bid_value || 0) / totalDurationMonths;
-
-                const overlapStart = planStart > tStart ? planStart : tStart;
-                const overlapEnd = planEnd < tEnd ? planEnd : tEnd;
-
-                let applicableMonths = 0;
-                if (overlapEnd >= overlapStart) {
-                    const diffTime = Math.abs(overlapEnd - overlapStart);
-                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                    applicableMonths = diffDays / 30;
-                }
-                const fraction = Number(plan.allocation_percentage || 100) / 100;
-                totalRevenue += (monthlyRevenue * applicableMonths) * fraction;
+                totalRevenue += calculateLinearRevenue(
+                    plan.quoted_bid_value,
+                    plan.proj_start,
+                    plan.proj_deadline,
+                    tStart,
+                    tEnd,
+                    emp.joining_date,
+                    plan.allocation_percentage,
+                    emp.name
+                );
             });
 
-            const jDate = new Date(emp.joining_date || '2026-02-01');
-            let actualStart = new Date(tStart);
-            if (actualStart < jDate) {
-                actualStart = jDate;
-            }
-            
-            let daysActive = 0;
-            if (tEnd >= actualStart) {
-                daysActive = (tEnd.getTime() - actualStart.getTime()) / (1000 * 60 * 60 * 24);
-            }
-            const expectedCost = (daysActive / 30) * monthlySalary;
+            const expectedCost = calculateStaffCost(
+                monthlySalary,
+                tStart,
+                tEnd,
+                emp.joining_date,
+                emp.name
+            );
 
             let asset_status = 'LIABILITY';
             let status_color = 'red';
@@ -423,8 +399,8 @@ router.post('/', async (req, res) => {
     const { name, role, joining_date, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate } = req.body;
     try {
         const result = await db.query(
-            'INSERT INTO employees (name, role, joining_date, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-            [name, role, joining_date || '2026-02-01', monthly_salary, status, specialization, hourly_rate, usd_hourly_rate]
+            'INSERT INTO employees (name, role, joining_date, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate, organization_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
+            [name, role, joining_date || '2026-02-01', monthly_salary, status, specialization, hourly_rate, usd_hourly_rate, req.user.organizationId]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -439,8 +415,8 @@ router.put('/:id', async (req, res) => {
     const { name, role, joining_date, monthly_salary, status, specialization, hourly_rate, usd_hourly_rate } = req.body;
     try {
         const result = await db.query(
-            'UPDATE employees SET name=$1, role=$2, joining_date=$3, monthly_salary=$4, status=$5, specialization=$6, hourly_rate=$7, usd_hourly_rate=$8 WHERE id=$9 RETURNING *',
-            [name, role, joining_date || '2026-02-01', monthly_salary, status, specialization, hourly_rate, usd_hourly_rate, id]
+            'UPDATE employees SET name=$1, role=$2, joining_date=$3, monthly_salary=$4, status=$5, specialization=$6, hourly_rate=$7, usd_hourly_rate=$8 WHERE id=$9 AND organization_id=$10 RETURNING *',
+            [name, role, joining_date || '2026-02-01', monthly_salary, status, specialization, hourly_rate, usd_hourly_rate, id, req.user.organizationId]
         );
         res.json(result.rows[0]);
     } catch (err) {
@@ -453,7 +429,7 @@ router.put('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     const { id } = req.params;
     try {
-        await db.query('DELETE FROM employees WHERE id = $1', [id]);
+        await db.query('DELETE FROM employees WHERE id = $1 AND organization_id = $2', [id, req.user.organizationId]);
         res.json({ message: 'Employee deleted' });
     } catch (err) {
         console.error(err);

@@ -2,22 +2,22 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const { calculateProjectFinancials } = require('../utils/projectCalculation');
-const { getActiveMonthsForEmployee, toLocalDate, getMonthsInPeriod, getValidMonthsForEmployee } = require('../utils/financialUtils');
+const { getActiveMonthsForEmployee, toLocalDate, getMonthsInPeriod, getValidMonthsForEmployee, calculateStaffCost } = require('../utils/financialUtils');
 
 // GET /api/dashboard/summary
 router.get('/summary', async (req, res) => {
   const { startDate, endDate } = req.query;
 
   // Build WHERE clauses
-  let projectsWhere = '';
-  let expensesWhere = '';
-  const queryParams = [];
+  let projectsWhere = 'WHERE organization_id = $1';
+  let expensesWhere = 'WHERE organization_id = $1';
+  const queryParams = [req.user.organizationId];
 
   if (startDate && endDate) {
     const start = `${startDate}T00:00:00`;
     const end = `${endDate}T23:59:59`;
-    projectsWhere = 'WHERE start_date <= $2 AND (deadline >= $1 OR deadline IS NULL)';
-    expensesWhere = 'WHERE date >= $1 AND date <= $2';
+    projectsWhere += ' AND start_date <= $3 AND (deadline >= $2 OR deadline IS NULL)';
+    expensesWhere += ' AND date >= $2 AND date <= $3';
     queryParams.push(start, end);
   }
 
@@ -27,8 +27,8 @@ router.get('/summary', async (req, res) => {
     const projectsResult = await db.query(projectsQuery, queryParams);
     const projects = projectsResult.rows;
 
-    // 2. Fetch all employees to initialize the map (historical cost tracking requires inactive employees to be tallied)
-    const allActiveEmployees = await db.query("SELECT id, name, role, joining_date, monthly_salary FROM employees");
+    // 2. Fetch all employees to initialize the map
+    const allActiveEmployees = await db.query("SELECT id, name, role, joining_date, monthly_salary FROM employees WHERE organization_id = $1", [req.user.organizationId]);
     const employeeCostMap = {};
     allActiveEmployees.rows.forEach(emp => {
       employeeCostMap[emp.id] = {
@@ -44,19 +44,20 @@ router.get('/summary', async (req, res) => {
 
     // 3. Fetch all resource plans for these employees
     const plansQuery = `
-        SELECT prp.*, e.monthly_salary, e.hourly_rate, e.name, e.role 
+        SELECT prp.*, e.monthly_salary, e.hourly_rate, e.name, e.role, e.joining_date 
         FROM project_resource_plans prp
         JOIN employees e ON prp.employee_id = e.id
+        WHERE prp.organization_id = $1
     `;
-    const plansResult = await db.query(plansQuery);
+    const plansResult = await db.query(plansQuery, [req.user.organizationId]);
     const allPlans = plansResult.rows;
 
     // 4. Fetch Timesheet Logs (Approved and Unapproved)
-    let logsWhere = '';
-    const logsParams = [];
+    let logsWhere = 'WHERE t.organization_id = $1';
+    const logsParams = [req.user.organizationId];
     if (startDate && endDate) {
-        logsWhere = 'WHERE t.date >= $1 AND t.date <= $2';
-        logsParams.push(startDate, endDate);
+      logsWhere += ' AND t.date >= $2 AND t.date <= $3';
+      logsParams.push(startDate, endDate);
     }
 
     const unapprovedLogsQuery = `
@@ -64,18 +65,18 @@ router.get('/summary', async (req, res) => {
         FROM timesheet_logs t
         JOIN employees e ON t.employee_id = e.id
         ${logsWhere} AND t.approval_id IS NULL
-    `;
+      `;
     const unapprovedLogsResult = await db.query(unapprovedLogsQuery, logsParams);
     const unapprovedLogs = unapprovedLogsResult.rows;
 
     // IMPORTANT: Aggregated approved logs for calculateProjectFinancials
     const approvedLogsQuery = `
-        SELECT 
-            t.project_id, 
-            t.employee_id,
-            p.billing_type,
-            SUM(t.hours_worked) as total_hours,
-            SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as total_inr_revenue
+    SELECT
+    t.project_id,
+      t.employee_id,
+      p.billing_type,
+      SUM(t.hours_worked) as total_hours,
+      SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as total_inr_revenue
         FROM timesheet_logs t
         JOIN employees e ON t.employee_id = e.id
         JOIN timesheet_approvals ta ON t.approval_id = ta.id
@@ -83,16 +84,17 @@ router.get('/summary', async (req, res) => {
         LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
         ${logsWhere}
         GROUP BY t.project_id, t.employee_id, p.billing_type
-    `;
+      `;
     const approvedLogsResult = await db.query(approvedLogsQuery, logsParams);
     const approvedLogs = approvedLogsResult.rows;
 
     const historicalTotalQuery = `
         SELECT t.project_id, t.employee_id, SUM(t.hours_worked) as total_hours
         FROM timesheet_logs t
+        WHERE t.organization_id = $1
         GROUP BY t.project_id, t.employee_id
-    `;
-    const historyResult = await db.query(historicalTotalQuery);
+      `;
+    const historyResult = await db.query(historicalTotalQuery, [req.user.organizationId]);
     const historyLogs = historyResult.rows;
 
     // 5. Aggregate Financials
@@ -108,9 +110,9 @@ router.get('/summary', async (req, res) => {
 
     projects.forEach(project => {
       const calculated = calculateProjectFinancials(project, allPlans, unapprovedLogs, approvedLogs, historyLogs, startDate, endDate);
-      
+
       const rev = Number(calculated.revenue_earned) || 0;
-      
+
       totalRevenue += rev;
 
       const type = project.billing_type || project.type || 'T&M';
@@ -129,7 +131,7 @@ router.get('/summary', async (req, res) => {
             employeeCostMap[plan.employee_id].revenueGenerated += plan.totalPlanRevenue || 0;
             employeeCostMap[plan.employee_id].asset_status = plan.asset_status;
             employeeCostMap[plan.employee_id].status_color = plan.status_color;
-            
+
             // Track allocation for bench calculation
             employeeAllocationMap[plan.employee_id] = (employeeAllocationMap[plan.employee_id] || 0) + (Number(plan.allocation_percentage) || 0);
           }
@@ -140,89 +142,57 @@ router.get('/summary', async (req, res) => {
     // 6. Calculate Total Payroll & Pro-Rata Staff Costs
     let totalPayrollCost = 0;
 
-    // Group hours by employee and billing type
-    const employeeHoursMap = {};
     allActiveEmployees.rows.forEach(emp => {
-        employeeHoursMap[emp.id] = { totalHours: 0, byType: {} };
-    });
+      const salary = Number(emp.monthly_salary) || 0;
+      
+      // UNIFIED PRO-RATA: Use shared utility for payroll cost
+      totalPayrollCost += calculateStaffCost(
+        salary,
+        startDate || new Date(new Date().getFullYear(), 0, 1),
+        endDate || new Date(),
+        emp.joining_date,
+        emp.name
+      );
 
-    approvedLogs.forEach(agg => {
-        if (agg.billing_type !== 'Fixed Bid' && employeeHoursMap[agg.employee_id]) {
-            const hrs = Number(agg.total_hours) || 0;
-            const bType = agg.billing_type || 'T&M';
-            employeeHoursMap[agg.employee_id].totalHours += hrs;
-            if (!employeeHoursMap[agg.employee_id].byType[bType]) {
-                employeeHoursMap[agg.employee_id].byType[bType] = 0;
-            }
-            employeeHoursMap[agg.employee_id].byType[bType] += hrs;
+      // 1. Assign Costs Based on Flat Allocations (Universal for T&M and Fixed Bid)
+      const empPlans = allPlans.filter(p => Number(p.employee_id) === Number(emp.id));
+      empPlans.forEach(plan => {
+        const project = projects.find(prj => prj.id === plan.project_id);
+        if (!project) return;
+        const bType = project.billing_type || 'T&M';
+
+        const alloc = Number(plan.allocation_percentage) || 100;
+        const fraction = alloc / 100;
+
+        // UNIFIED PRO-RATA: Use shared utility for project allocation cost
+        const allocatedCost = fraction * calculateStaffCost(
+          salary,
+          plan.start_date || startDate,
+          plan.end_date || endDate,
+          emp.joining_date,
+          emp.name
+        );
+
+        if (allocatedCost > 0) {
+          totalProjectCosts += allocatedCost;
+          if (!processTypeBreakdownMap[bType]) {
+            processTypeBreakdownMap[bType] = { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 };
+          }
+          processTypeBreakdownMap[bType].cost += allocatedCost;
+
+          if (!employeeCostMap[emp.id]) employeeCostMap[emp.id] = { id: emp.id, name: emp.name, totalCost: 0, byType: {}, benchCost: 0, role: emp.role };
+
+          employeeCostMap[emp.id].totalCost += allocatedCost;
+          if (!employeeCostMap[emp.id].byType[bType]) employeeCostMap[emp.id].byType[bType] = 0;
+          employeeCostMap[emp.id].byType[bType] += allocatedCost;
         }
-    });
-
-    allActiveEmployees.rows.forEach(emp => {
-        const salary = Number(emp.monthly_salary) || 0;
-        const validMonthsMultiplier = getValidMonthsForEmployee(emp.joining_date, startDate, endDate);
-        const periodSalary = salary * validMonthsMultiplier;
-        totalPayrollCost += periodSalary;
-
-        const hourlyInternalRate = salary / 160;
-
-        // 1. Assign Costs Based on Flat Allocations (Universal for T&M and Fixed Bid)
-        const empPlans = allPlans.filter(p => Number(p.employee_id) === Number(emp.id));
-        empPlans.forEach(plan => {
-            const project = projects.find(prj => prj.id === plan.project_id);
-            if (!project) return;
-            const bType = project.billing_type || 'T&M';
-
-            const alloc = Number(plan.allocation_percentage) || 100;
-            const fraction = alloc / 100;
-
-            const planStart = plan.start_date ? new Date(plan.start_date) : new Date(startDate || new Date().getFullYear(), 0, 1);
-            let planEnd = plan.end_date ? new Date(plan.end_date) : new Date(endDate || new Date());
-            
-            // Allow overdue plans to accrue cost right up to today/UI limits
-            const today = new Date();
-            if (project.status === 'Active' && planEnd < today) {
-                planEnd = today;
-            }
-
-            let uiStart = startDate ? new Date(startDate) : new Date(new Date().getFullYear(), 0, 1);
-            let uiEnd = endDate ? new Date(endDate) : new Date();
-
-            let jDate = new Date(emp.joining_date || '2026-02-01');
-            uiStart = uiStart < jDate ? jDate : uiStart;
-
-            let overlapStart = planStart > uiStart ? planStart : uiStart;
-            let overlapEnd = planEnd < uiEnd ? planEnd : uiEnd;
-
-            let activePlanFraction = 0;
-            if (overlapEnd >= overlapStart) {
-                const diffTime = Math.abs(overlapEnd - overlapStart);
-                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                activePlanFraction = diffDays / 30;
-            }
-
-            const allocatedCost = fraction * salary * activePlanFraction;
-            
-            if (allocatedCost > 0) {
-                totalProjectCosts += allocatedCost;
-                if (!processTypeBreakdownMap[bType]) {
-                    processTypeBreakdownMap[bType] = { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 };
-                }
-                processTypeBreakdownMap[bType].cost += allocatedCost;
-
-                if (!employeeCostMap[emp.id]) employeeCostMap[emp.id] = { id: emp.id, name: emp.name, totalCost: 0, byType: {}, benchCost: 0, role: emp.role };
-                
-                employeeCostMap[emp.id].totalCost += allocatedCost;
-                if (!employeeCostMap[emp.id].byType[bType]) employeeCostMap[emp.id].byType[bType] = 0;
-                employeeCostMap[emp.id].byType[bType] += allocatedCost;
-            }
-        });
+      });
     });
 
     // Update margin for each process type after pro-rata cost calculation
     Object.keys(processTypeBreakdownMap).forEach(type => {
-        const t = processTypeBreakdownMap[type];
-        t.margin = t.rev - t.cost;
+      const t = processTypeBreakdownMap[type];
+      t.margin = t.rev - t.cost;
     });
 
     const processTypeBreakdown = Object.keys(processTypeBreakdownMap).map(type => ({
@@ -236,7 +206,7 @@ router.get('/summary', async (req, res) => {
     const totalBenchCost = Math.max(0, totalPayrollCost - totalProjectCosts);
 
     // 8. Company Expenses
-    const expensesResult = await db.query(`SELECT SUM(amount) as total_expenses FROM company_expenses ${expensesWhere}`, queryParams);
+    const expensesResult = await db.query(`SELECT SUM(amount) as total_expenses FROM company_expenses ${expensesWhere} `, queryParams);
     const totalExpensesValue = Number(expensesResult.rows[0]?.total_expenses) || 0;
 
     const finalStaffCost = totalPayrollCost;
@@ -269,50 +239,70 @@ router.get('/analytics', async (req, res) => {
           '1 month'::interval
         ) as month
       ),
-      monthly_revenue AS (
+      tm_revenue AS (
         SELECT 
-          months.month,
-          SUM(
-            CASE 
-              WHEN p.billing_type = 'Fixed Bid' THEN p.fixed_contract_value
-              ELSE p.revenue_earned 
-            END / 
-            GREATEST(1, EXTRACT(year from age(COALESCE(p.deadline, CURRENT_DATE), p.start_date)) * 12 + EXTRACT(month from age(COALESCE(p.deadline, CURRENT_DATE), p.start_date)) + 1)
-          ) as total_revenue
-        FROM projects p
-        JOIN months ON months.month >= date_trunc('month', p.start_date) 
-                   AND months.month <= date_trunc('month', COALESCE(p.deadline, CURRENT_DATE))
+          date_trunc('month', t.date) as month,
+          SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as revenue
+        FROM timesheet_logs t
+        JOIN projects p ON t.project_id = p.id
+        JOIN employees e ON t.employee_id = e.id
+        JOIN timesheet_approvals ta ON t.approval_id = ta.id
+        LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
+        WHERE (p.billing_type != 'Fixed Bid' AND p.type::text != 'Fixed Bid') 
+          AND t.organization_id = $1
         GROUP BY 1
+      ),
+      fb_revenue AS (
+        SELECT 
+          m.month,
+          SUM(COALESCE(p.quoted_bid_value, p.fixed_contract_value, 0) / GREATEST(1, (EXTRACT(year FROM age(COALESCE(p.deadline, CURRENT_DATE), p.start_date)) * 12 + EXTRACT(month FROM age(COALESCE(p.deadline, CURRENT_DATE), p.start_date)) + 1))) as revenue
+        FROM projects p
+        CROSS JOIN months m
+        WHERE (p.billing_type = 'Fixed Bid' OR p.type::text = 'Fixed Bid')
+          AND p.organization_id = $1
+          AND m.month >= date_trunc('month', p.start_date)
+          AND m.month <= date_trunc('month', COALESCE(p.deadline, CURRENT_DATE))
+        GROUP BY 1
+      ),
+      combined_revenue AS (
+        SELECT 
+          m.month,
+          COALESCE(tm.revenue, 0) + COALESCE(fb.revenue, 0) as total_revenue
+        FROM months m
+        LEFT JOIN tm_revenue tm ON tm.month = m.month
+        LEFT JOIN fb_revenue fb ON fb.month = m.month
       ),
       monthly_expenses AS (
         SELECT 
-          date_trunc('month', date) as month, 
+          date_trunc('month', date) as month,
           SUM(amount) as total_expenses
         FROM company_expenses
         WHERE date >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'
+          AND organization_id = $1
         GROUP BY 1
       )
-      SELECT 
+      SELECT
         TO_CHAR(months.month, 'Mon') as name,
         ROUND(COALESCE(r.total_revenue, 0)) as revenue,
         ROUND(COALESCE(e.total_expenses, 0)) as expenses
       FROM months
-      LEFT JOIN monthly_revenue r ON r.month = months.month
+      LEFT JOIN combined_revenue r ON r.month = months.month
       LEFT JOIN monthly_expenses e ON e.month = months.month
       ORDER BY months.month ASC;
     `;
-    const trendResult = await db.query(trendQuery);
+    const trendResult = await db.query(trendQuery, [req.user.organizationId]);
 
     const breakdownQuery = `
-      SELECT 
-        category as name,
-        SUM(amount) as value
+    SELECT
+    category as name,
+      SUM(amount) as value
       FROM company_expenses
       WHERE date >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'
+      AND organization_id = $1
       GROUP BY category
       ORDER BY value DESC
-    `;
-    const breakdownResult = await db.query(breakdownQuery);
+      `;
+    const breakdownResult = await db.query(breakdownQuery, [req.user.organizationId]);
 
     let expensesChartData = breakdownResult.rows.map(row => ({
       name: row.name,

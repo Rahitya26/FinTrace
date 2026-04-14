@@ -17,9 +17,9 @@ router.get('/', async (req, res) => {
         const clientId = req.query.clientId;
 
         // 1. Build dynamic WHERE clause
-        let whereClauses = [];
-        let queryParams = [];
-        let paramIndex = 1;
+        let whereClauses = [`p.organization_id = $1`];
+        let queryParams = [req.user.organizationId];
+        let paramIndex = 2;
 
         if (clientId) {
             whereClauses.push(`p.client_id = $${paramIndex}`);
@@ -57,7 +57,7 @@ router.get('/', async (req, res) => {
             paramIndex++;
         }
 
-        const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+        const whereString = `WHERE ${whereClauses.join(' AND ')}`;
 
         // 2. Get Total Count for Pagination
         const countQuery = `
@@ -90,13 +90,14 @@ router.get('/', async (req, res) => {
         const projectsResult = await db.query(projectsQuery, [...queryParams, limit, offset]);
         const projects = projectsResult.rows;
 
-        // 2. Fetch Resource Plans with Employee Details
+        // 2. Fetch Resource Plans with Employee Details (Scoped to Org)
         const plansQuery = `
             SELECT prp.*, e.monthly_salary, e.hourly_rate, e.usd_hourly_rate as default_usd_rate, e.name as employee_name, e.role 
             FROM project_resource_plans prp
             JOIN employees e ON prp.employee_id = e.id
+            WHERE prp.organization_id = $1
         `;
-        const plansResult = await db.query(plansQuery);
+        const plansResult = await db.query(plansQuery, [req.user.organizationId]);
         const plans = plansResult.rows.map(p => ({ ...p, name: p.employee_name })); // Ensure 'name' is available for calculations
 
         // 3. Fetch Unapproved Timesheet Logs for T&M Projections
@@ -107,9 +108,9 @@ router.get('/', async (req, res) => {
             FROM timesheet_logs t
             JOIN employees e ON t.employee_id = e.id
             LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
-            WHERE t.approval_id IS NULL
+            WHERE t.approval_id IS NULL AND t.organization_id = $1
         `;
-        const unapprovedLogsResult = await db.query(unapprovedLogsQuery);
+        const unapprovedLogsResult = await db.query(unapprovedLogsQuery, [req.user.organizationId]);
         const unapprovedLogs = unapprovedLogsResult.rows;
 
         const approvedLogsQuery = `
@@ -125,9 +126,10 @@ router.get('/', async (req, res) => {
             FROM timesheet_logs t
             JOIN employees e ON t.employee_id = e.id
             JOIN timesheet_approvals ta ON t.approval_id = ta.id
+            WHERE t.organization_id = $1
             GROUP BY t.project_id, t.employee_id, EXTRACT(MONTH FROM t.date), EXTRACT(YEAR FROM t.date)
         `;
-        const approvedLogsResult = await db.query(approvedLogsQuery);
+        const approvedLogsResult = await db.query(approvedLogsQuery, [req.user.organizationId]);
         const approvedLogs = approvedLogsResult.rows;
 
         // 5. Merge and Calculate Costs
@@ -161,13 +163,14 @@ router.post('/', async (req, res) => {
         const projectResult = await client.query(
             `INSERT INTO projects (
                 client_id, name, type, revenue_earned, employee_costs, 
-                start_date, deadline, status, billing_type, fixed_contract_value, quoted_bid_value, budgeted_hours
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+                start_date, deadline, status, billing_type, fixed_contract_value, quoted_bid_value, budgeted_hours, organization_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
             [
                 clientId, name, type, revenue || 0, costs || 0, 
                 startDate || new Date().toISOString().split('T')[0], 
                 deadline || null, status || 'Active', billingType || 'T&M', 
-                fixedContractValue || 0, quotedBidValue || 0, budgetedHours || 0
+                fixedContractValue || 0, quotedBidValue || 0, budgetedHours || 0,
+                req.user.organizationId
             ]
         );
         
@@ -178,15 +181,16 @@ router.post('/', async (req, res) => {
             for (const resource of resources) {
                 await client.query(
                     `INSERT INTO project_resource_plans (
-                        project_id, employee_id, allocation_percentage, start_date, end_date, usd_rate
-                    ) VALUES ($1, $2, $3, $4, $5, $6)`,
+                        project_id, employee_id, allocation_percentage, start_date, end_date, usd_rate, organization_id
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
                     [
                         newProject.id, 
                         resource.employeeId, 
                         resource.allocation || 100, 
                         resource.startDate || newProject.start_date,
                         resource.endDate || null,
-                        resource.usdRate || null
+                        resource.usdRate || null,
+                        req.user.organizationId
                     ]
                 );
             }
@@ -210,8 +214,8 @@ router.put('/:id/status', async (req, res) => {
 
     try {
         const result = await db.query(
-            'UPDATE projects SET status = $1 WHERE id = $2 RETURNING *',
-            [status, id]
+            'UPDATE projects SET status = $1 WHERE id = $2 AND organization_id = $3 RETURNING *',
+            [status, id, req.user.organizationId]
         );
 
         if (result.rows.length === 0) {
@@ -229,7 +233,7 @@ router.put('/:id/status', async (req, res) => {
 router.delete('/:id', async (req, res) => {
     const { id } = req.params;
     try {
-        const result = await db.query('DELETE FROM projects WHERE id = $1 RETURNING *', [id]);
+        const result = await db.query('DELETE FROM projects WHERE id = $1 AND organization_id = $2 RETURNING *', [id, req.user.organizationId]);
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Project not found' });
         }
@@ -247,8 +251,8 @@ router.patch('/:id/resources/:employeeId/offboard', async (req, res) => {
         const targetDate = endDate || new Date().toISOString().split('T')[0];
 
         const result = await db.query(
-            'UPDATE project_resource_plans SET end_date = $3 WHERE project_id = $1 AND employee_id = $2 AND end_date IS NULL RETURNING *',
-            [req.params.id, req.params.employeeId, targetDate]
+            'UPDATE project_resource_plans SET end_date = $3 WHERE project_id = $1 AND employee_id = $2 AND end_date IS NULL AND organization_id = $4 RETURNING *',
+            [req.params.id, req.params.employeeId, targetDate, req.user.organizationId]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Active allocation not found' });
@@ -268,9 +272,9 @@ router.get('/:id/resources', async (req, res) => {
             SELECT prp.*, e.name, e.role, e.specialization
             FROM project_resource_plans prp
             JOIN employees e ON prp.employee_id = e.id
-            WHERE prp.project_id = $1
+            WHERE prp.project_id = $1 AND prp.organization_id = $2
         `;
-        const result = await db.query(query, [id]);
+        const result = await db.query(query, [id, req.user.organizationId]);
         res.json(result.rows);
     } catch (err) {
         console.error(err);
@@ -305,8 +309,8 @@ router.post('/:id/resources', async (req, res) => {
         }
 
         const result = await db.query(
-            'INSERT INTO project_resource_plans (project_id, employee_id, allocation_percentage, start_date, usd_rate) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-            [id, employeeId, allocationPercentage || 100, startDate, req.body.usdRate || null]
+            'INSERT INTO project_resource_plans (project_id, employee_id, allocation_percentage, start_date, usd_rate, organization_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+            [id, employeeId, allocationPercentage || 100, startDate, req.body.usdRate || null, req.user.organizationId]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {

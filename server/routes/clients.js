@@ -11,9 +11,10 @@ router.get('/', async (req, res) => {
                 SELECT c.*, COUNT(p.id)::int as project_count
                 FROM clients c
                 LEFT JOIN projects p ON c.id = p.client_id AND p.status = 'Active'
+                WHERE c.organization_id = $1
                 GROUP BY c.id
                 ORDER BY c.created_at DESC
-            `);
+            `, [req.user.organizationId]);
             return res.json(result.rows);
         }
 
@@ -22,9 +23,9 @@ router.get('/', async (req, res) => {
         const offset = (page - 1) * limit;
         const search = req.query.search;
 
-        let whereClauses = [];
-        let queryParams = [];
-        let paramIndex = 1;
+        let whereClauses = [`c.organization_id = $1`];
+        let queryParams = [req.user.organizationId];
+        let paramIndex = 2;
 
         if (search) {
             whereClauses.push(`c.name ILIKE $${paramIndex}`);
@@ -32,7 +33,7 @@ router.get('/', async (req, res) => {
             paramIndex++;
         }
 
-        const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+        const whereString = `WHERE ${whereClauses.join(' AND ')}`;
 
         const countQuery = `SELECT COUNT(*) FROM clients c ${whereString}`;
         const countResult = await db.query(countQuery, queryParams);
@@ -70,8 +71,8 @@ router.post('/', async (req, res) => {
     const { name, industry } = req.body;
     try {
         const result = await db.query(
-            'INSERT INTO clients (name, industry) VALUES ($1, $2) RETURNING *',
-            [name, industry]
+            'INSERT INTO clients (name, industry, organization_id) VALUES ($1, $2, $3) RETURNING *',
+            [name, industry, req.user.organizationId]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {

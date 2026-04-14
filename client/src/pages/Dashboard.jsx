@@ -265,7 +265,7 @@ const Dashboard = () => {
                                             >
                                                 <div className="flex items-center justify-between mb-2">
                                                     <span className="font-medium text-slate-700 dark:text-slate-300 group-hover:text-primary dark:group-hover:text-primary-light transition-colors">{item.type}</span>
-                                                    <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(item.margin)}</span>
+                                                    <span className="font-bold text-slate-900 dark:text-white">{formatCurrency(item.rev)}</span>
                                                 </div>
                                                 <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
                                                     <div
@@ -277,6 +277,16 @@ const Dashboard = () => {
                                             </div>
                                         );
                                     })}
+
+                                    {/* Bench Cost Row */}
+                                    <div className="p-2 rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/20">
+                                        <div className="flex items-center justify-between mb-1">
+                                            <span className="text-sm font-medium text-slate-500 dark:text-slate-400">Bench / Unallocated Cost</span>
+                                            <span className="font-bold text-red-400">-{formatCurrency(stats.totalBenchCost)}</span>
+                                        </div>
+                                        <p className="text-[10px] text-slate-400 italic">Salary cost for time not allocated to projects</p>
+                                    </div>
+
                                     
                                     {/* Final Reconciliation Footer */}
                                     <div className="pt-6 border-t border-slate-200 dark:border-slate-700">
@@ -286,13 +296,18 @@ const Dashboard = () => {
                                                 <span className="font-bold text-slate-700 dark:text-slate-300">{formatCurrency(sumOfProcessMargins)}</span>
                                             </div>
                                             <div className="flex items-center justify-between text-sm">
+                                                <span className="text-slate-500 dark:text-slate-400 font-medium">Bench / Unallocated Cost</span>
+                                                <span className="font-bold text-red-400">-{formatCurrency(stats.totalBenchCost)}</span>
+                                            </div>
+                                            <div className="flex items-center justify-between text-sm">
                                                 <span className="text-slate-500 dark:text-slate-400 font-medium">Operational Expenses</span>
                                                 <span className="font-bold text-red-500">-{formatCurrency(stats.totalCompanyExpenses)}</span>
                                             </div>
                                             <div className="pt-3 mt-3 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
                                                 <span className="font-bold text-slate-900 dark:text-white">Final Net Savings</span>
-                                                <span className="font-bold text-lg text-emerald-500">{formatCurrency(netSavings)}</span>
+                                                <span className="font-bold text-lg text-emerald-500">{formatCurrency(sumOfProcessMargins - stats.totalBenchCost - stats.totalCompanyExpenses)}</span>
                                             </div>
+
                                         </div>
                                     </div>
                                 </div>

@@ -3,11 +3,14 @@ import { Link, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Users, Briefcase, Receipt, Settings, Menu, X, Sun, Moon, Clock, CheckSquare } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useTheme } from '../hooks/useTheme';
+import { useAuth } from '../context/AuthContext';
+import { LogOut } from 'lucide-react';
 
 const Layout = ({ children }) => {
     const location = useLocation();
     const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
     const { theme, toggleTheme } = useTheme();
+    const { logout, user } = useAuth();
 
     const navItems = [
         { label: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -55,11 +58,21 @@ const Layout = ({ children }) => {
                     );
                 })}
             </nav>
-            <div className="p-4 border-t border-slate-200 dark:border-slate-700">
-                <div className="flex items-center space-x-3 text-slate-500 dark:text-slate-400 text-xs">
+                <div className="flex flex-col space-y-2 text-slate-500 dark:text-slate-400 text-xs">
+                    {user && (
+                        <div className="flex flex-col border-b border-slate-200 dark:border-slate-700 pb-2 mb-2">
+                            <span className="font-semibold text-slate-700 dark:text-slate-300 truncate">{user.email}</span>
+                            <span className="text-[10px] opacity-70">Org ID: {user.organizationId}</span>
+                        </div>
+                    )}
+                    <button 
+                        onClick={logout}
+                        className="flex items-center text-red-600 hover:text-red-700 font-medium py-2 transition-colors"
+                    >
+                        <LogOut className="w-4 h-4 mr-2" /> Logout
+                    </button>
                     <span>v1.0.0</span>
                 </div>
-            </div>
         </>
     );
 

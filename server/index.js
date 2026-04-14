@@ -20,19 +20,24 @@ const pool = new Pool({
 });
 
 // Routes
+const authRouter = require('./routes/auth');
 const clientsRouter = require('./routes/clients');
 const projectsRouter = require('./routes/projects');
 const expensesRouter = require('./routes/expenses');
 const dashboardRouter = require('./routes/dashboard');
 const employeesRouter = require('./routes/employees');
 const timesheetsRouter = require('./routes/timesheets');
+const authMiddleware = require('./middleware/auth');
 
-app.use('/api/clients', clientsRouter);
-app.use('/api/projects', projectsRouter);
-app.use('/api/expenses', expensesRouter);
-app.use('/api/dashboard', dashboardRouter);
-app.use('/api/employees', employeesRouter);
-app.use('/api/timesheets', timesheetsRouter);
+app.use('/api/auth', authRouter);
+
+// Protected Data Routes
+app.use('/api/clients', authMiddleware, clientsRouter);
+app.use('/api/projects', authMiddleware, projectsRouter);
+app.use('/api/expenses', authMiddleware, expensesRouter);
+app.use('/api/dashboard', authMiddleware, dashboardRouter);
+app.use('/api/employees', authMiddleware, employeesRouter);
+app.use('/api/timesheets', authMiddleware, timesheetsRouter);
 
 app.get('/', (req, res) => {
     res.send('Service Financial Tracker API is running');

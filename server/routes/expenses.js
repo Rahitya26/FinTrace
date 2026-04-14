@@ -7,7 +7,7 @@ router.get('/', async (req, res) => {
     try {
         if (!req.query.page) {
             // Backward compatibility
-            const result = await db.query('SELECT * FROM company_expenses ORDER BY date DESC');
+            const result = await db.query('SELECT * FROM company_expenses WHERE organization_id = $1 ORDER BY date DESC', [req.user.organizationId]);
             return res.json(result.rows);
         }
 
@@ -16,9 +16,9 @@ router.get('/', async (req, res) => {
         const offset = (page - 1) * limit;
         const { search, startDate, endDate } = req.query;
 
-        let whereClauses = [];
-        let queryParams = [];
-        let paramIndex = 1;
+        let whereClauses = [`organization_id = $1`];
+        let queryParams = [req.user.organizationId];
+        let paramIndex = 2;
 
         if (search) {
             whereClauses.push(`(category ILIKE $${paramIndex} OR description ILIKE $${paramIndex})`);
@@ -38,7 +38,7 @@ router.get('/', async (req, res) => {
             paramIndex++;
         }
 
-        const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+        const whereString = `WHERE ${whereClauses.join(' AND ')}`;
 
         const countQuery = `SELECT COUNT(*), COALESCE(SUM(amount), 0) as total_amount FROM company_expenses ${whereString}`;
         const countResult = await db.query(countQuery, queryParams);
@@ -75,8 +75,8 @@ router.post('/', async (req, res) => {
     const { category, amount, date, description } = req.body;
     try {
         const result = await db.query(
-            'INSERT INTO company_expenses (category, amount, date, description) VALUES ($1, $2, $3, $4) RETURNING *',
-            [category, amount, date, description]
+            'INSERT INTO company_expenses (category, amount, date, description, organization_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [category, amount, date, description, req.user.organizationId]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -88,7 +88,7 @@ router.post('/', async (req, res) => {
 // GET /api/expenses/categories - List all categories
 router.get('/categories', async (req, res) => {
     try {
-        const result = await db.query('SELECT * FROM expense_categories ORDER BY is_default DESC, name ASC');
+        const result = await db.query('SELECT * FROM expense_categories WHERE organization_id = $1 ORDER BY is_default DESC, name ASC', [req.user.organizationId]);
         res.json(result.rows);
     } catch (err) {
         console.error(err);
@@ -101,8 +101,8 @@ router.post('/categories', async (req, res) => {
     const { name } = req.body;
     try {
         const result = await db.query(
-            'INSERT INTO expense_categories (name) VALUES ($1) ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING *',
-            [name]
+            'INSERT INTO expense_categories (name, organization_id) VALUES ($1, $2) ON CONFLICT (name, organization_id) DO UPDATE SET name = EXCLUDED.name RETURNING *',
+            [name, req.user.organizationId]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {

@@ -4,6 +4,21 @@ const api = axios.create({
     baseURL: 'http://localhost:5001/api',
 });
 
+// Add Interceptor for JWT
+api.interceptors.request.use((config) => {
+    const token = localStorage.getItem('fintrace_token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+}, (error) => {
+    return Promise.reject(error);
+});
+
+export const requestOtp = (email) => api.post('/auth/request-otp', { email });
+export const verifyOtp = (payload) => api.post('/auth/verify-otp', payload);
+export const loginPassword = (email, password) => api.post('/auth/login-password', { email, password });
+
 export const getClients = (params) => api.get('/clients', { params });
 export const createClient = (data) => api.post('/clients', data);
 

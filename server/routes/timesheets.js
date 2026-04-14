@@ -12,8 +12,9 @@ router.get('/client-resources/:clientId', async (req, res) => {
             JOIN project_resource_plans prp ON e.id = prp.employee_id
             JOIN projects p ON prp.project_id = p.id
             WHERE p.client_id = $1 AND (prp.end_date IS NULL OR prp.end_date >= CURRENT_DATE)
+            AND p.organization_id = $2
         `;
-        const result = await pool.query(query, [clientId]);
+        const result = await pool.query(query, [clientId, req.user.organizationId]);
         res.json(result.rows);
     } catch (err) {
         console.error(err.message);
@@ -39,8 +40,8 @@ router.post('/log', async (req, res) => {
             `SELECT prp.end_date, prp.start_date as assignment_start, p.start_date as project_start 
              FROM project_resource_plans prp 
              JOIN projects p ON prp.project_id = p.id
-             WHERE prp.employee_id = $1 AND prp.project_id = $2`,
-            [employee_id, project_id]
+             WHERE prp.employee_id = $1 AND prp.project_id = $2 AND prp.organization_id = $3`,
+            [employee_id, project_id, req.user.organizationId]
         );
 
         if (planRes.rows.length === 0) {
@@ -101,8 +102,8 @@ router.post('/log', async (req, res) => {
 
             // Check if log already exists and is locked
             const check = await client.query(
-                'SELECT id, approval_id FROM timesheet_logs WHERE project_id = $1 AND employee_id = $2 AND date = $3',
-                [project_id, employee_id, day]
+                'SELECT id, approval_id FROM timesheet_logs WHERE project_id = $1 AND employee_id = $2 AND date = $3 AND organization_id = $4',
+                [project_id, employee_id, day, req.user.organizationId]
             );
 
             if (check.rows.length > 0) {
@@ -117,8 +118,8 @@ router.post('/log', async (req, res) => {
             } else {
                 // Create new log
                 await client.query(
-                    'INSERT INTO timesheet_logs (project_id, employee_id, date, hours_worked, description, batch_id) VALUES ($1, $2, $3, $4, $5, $6)',
-                    [project_id, employee_id, day, currentDayHours, description, batch_id]
+                    'INSERT INTO timesheet_logs (project_id, employee_id, date, hours_worked, description, batch_id, organization_id) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                    [project_id, employee_id, day, currentDayHours, description, batch_id, req.user.organizationId]
                 );
             }
         }
@@ -146,10 +147,10 @@ router.get('/', async (req, res) => {
             JOIN projects p ON t.project_id = p.id
             JOIN employees e ON t.employee_id = e.id
             LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
-            WHERE 1=1
+            WHERE t.organization_id = $1
         `;
-        const values = [];
-        let count = 1;
+        const values = [req.user.organizationId];
+        let count = 2;
 
         if (startDate && endDate) {
             query += ` AND t.date BETWEEN $${count} AND $${count + 1}`;
@@ -205,7 +206,8 @@ router.post('/approve', async (req, res) => {
             LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
             WHERE t.id = ANY($1::int[]) 
             AND t.approval_id IS NULL
-        `, [logIds]);
+            AND t.organization_id = $2
+        `, [logIds, req.user.organizationId]);
 
         if (unapprovedLogs.rows.length === 0) {
             await pool.query('ROLLBACK');
@@ -241,10 +243,10 @@ router.post('/approve', async (req, res) => {
 
         // Create Approval Record
         const approvalRes = await pool.query(`
-            INSERT INTO timesheet_approvals (period_type, start_date, end_date, usd_to_inr_rate, total_usd_value, total_inr_revenue, status)
-            VALUES ('Weekly', (SELECT MIN(date) FROM timesheet_logs WHERE id = ANY($1::int[])), (SELECT MAX(date) FROM timesheet_logs WHERE id = ANY($1::int[])), $2, $3, $4, 'Accepted')
+            INSERT INTO timesheet_approvals (period_type, start_date, end_date, usd_to_inr_rate, total_usd_value, total_inr_revenue, status, organization_id)
+            VALUES ('Weekly', (SELECT MIN(date) FROM timesheet_logs WHERE id = ANY($1::int[])), (SELECT MAX(date) FROM timesheet_logs WHERE id = ANY($1::int[])), $2, $3, $4, 'Accepted', $5)
             RETURNING id
-        `, [validatedLogIds, usd_to_inr_rate, totalUsdValue, totalInrValue]);
+        `, [validatedLogIds, usd_to_inr_rate, totalUsdValue, totalInrValue, req.user.organizationId]);
 
         const approvalId = approvalRes.rows[0].id;
 
@@ -261,8 +263,8 @@ router.post('/approve', async (req, res) => {
                 UPDATE projects 
                 SET revenue_earned = COALESCE(revenue_earned, 0) + $1,
                     employee_costs = COALESCE(employee_costs, 0) + $2
-                WHERE id = $3
-            `, [amounts.rev, amounts.cost, projectId]);
+                WHERE id = $3 AND organization_id = $4
+            `, [amounts.rev, amounts.cost, projectId, req.user.organizationId]);
         }
 
         await pool.query('COMMIT');
@@ -277,7 +279,7 @@ router.post('/approve', async (req, res) => {
 // GET /api/timesheets/approvals - Get all approvals
 router.get('/approvals', async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM timesheet_approvals ORDER BY created_at DESC');
+        const result = await pool.query('SELECT * FROM timesheet_approvals WHERE organization_id = $1 ORDER BY created_at DESC', [req.user.organizationId]);
         res.json(result.rows);
     } catch (err) {
         console.error(err.message);
