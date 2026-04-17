@@ -1,7 +1,17 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
-const { getActiveMonthsForEmployee, toLocalDate, calculateFixedBidRevenueShare, getBusinessHoursInMonth, calculateLinearRevenue, calculateStaffCost } = require('../utils/financialUtils');
+const db = require('@/db');
+const { 
+  getMonthsInPeriod, 
+  getValidMonthsForEmployee, 
+  getBusinessHoursInMonth, 
+  getActiveMonthsForEmployee, 
+  toLocalDate, 
+  calculateFixedBidRevenueShare,
+  calculateLinearRevenue,
+  calculateStaffCost
+} = require('@/utils/financialUtils');
+const { calculateInclusiveDays, SYSTEM_TODAY } = require('@/utils/dateUtils');
 
 // GET /api/employees/:id/performance
 router.get('/:id/performance', async (req, res) => {
@@ -16,7 +26,10 @@ router.get('/:id/performance', async (req, res) => {
         }
 
         const monthlySalary = Number(empResult.rows[0].monthly_salary) || 0;
-        const joiningDate = empResult.rows[0].joining_date || '2026-02-01';
+        let joiningDate = empResult.rows[0].joining_date || '2026-02-01';
+        if (joiningDate instanceof Date) {
+            joiningDate = joiningDate.toISOString().substring(0, 10);
+        }
         const jDate = new Date(joiningDate);
         const baselineCost = monthlySalary;
 
@@ -32,7 +45,7 @@ router.get('/:id/performance', async (req, res) => {
             // Force local date boundaries to prevent timezone shifting (Date Leak)
             start = new Date(`${startDate}T00:00:00`);
             end = new Date(`${endDate}T23:59:59`);
-            const daysInPeriod = Math.ceil(Math.abs(end - start) / (1000 * 60 * 60 * 24));
+            const daysInPeriod = calculateInclusiveDays(start, end);
             
             if (daysInPeriod <= 7) {
                 isDaily = true;
@@ -133,7 +146,14 @@ router.get('/:id/performance', async (req, res) => {
             WHERE prp.employee_id = $1 AND p.billing_type = 'Fixed Bid' AND prp.organization_id = $2
         `;
         const fixedBidPlansResult = await db.query(fixedBidQuery, [empId, req.user.organizationId]);
-        const fixedBidPlans = fixedBidPlansResult.rows;
+        
+        const sliceDate = (val) => val instanceof Date ? val.toISOString().substring(0, 10) : val;
+        
+        const fixedBidPlans = fixedBidPlansResult.rows.map(p => {
+            p.start_date = sliceDate(p.start_date);
+            p.deadline = sliceDate(p.deadline);
+            return p;
+        });
 
         // 4. Calculate Total Revenue
         let totalRevenue = 0;
@@ -146,7 +166,7 @@ router.get('/:id/performance', async (req, res) => {
                 plan.deadline,
                 start,
                 end,
-                empResult.rows[0].joining_date,
+                joiningDate,
                 plan.allocation_percentage,
                 empResult.rows[0].name
             );
@@ -205,7 +225,7 @@ router.get('/:id/performance', async (req, res) => {
                     plan.deadline,
                     linearBoundStart,
                     linearBoundEnd,
-                    empResult.rows[0].joining_date,
+                    joiningDate,
                     plan.allocation_percentage,
                     empResult.rows[0].name
                 );
@@ -224,7 +244,9 @@ router.get('/:id/performance', async (req, res) => {
                 monthlySalary,
                 linearBoundStart,
                 linearBoundEnd,
-                empResult.rows[0].joining_date,
+                linearBoundStart, // Use local segment bounds as filter
+                linearBoundEnd,
+                joiningDate,
                 empResult.rows[0].name
             );
 
@@ -248,16 +270,35 @@ router.get('/:id/performance', async (req, res) => {
             monthlySalary,
             start,
             end,
-            empResult.rows[0].joining_date,
+            start, // Use global filter bounds
+            end,
+            joiningDate,
             empResult.rows[0].name
         );
-        const totalProfitContribution = totalRevenue - periodStaffCost;
+        
+        let fbRevenueMatch = 0;
+        fixedBidPlans.forEach(plan => {
+            fbRevenueMatch += calculateLinearRevenue(
+                plan.quoted_bid_value,
+                plan.start_date,
+                plan.deadline,
+                start,
+                end,
+                joiningDate,
+                plan.allocation_percentage,
+                empResult.rows[0].name
+            );
+        });
+
+        // The exact target for Profit Contribution must ONLY use Project FB Share bounds
+        const totalProfitContribution = fbRevenueMatch - periodStaffCost;
 
         res.json({
             timeline,
             totalProfitContribution: Math.round(totalProfitContribution),
             periodStaffCost: Math.round(periodStaffCost),
-            currentBusinessHours: 160
+            currentBusinessHours: 160,
+            joiningDate: joiningDate
         });
 
     } catch (err) {

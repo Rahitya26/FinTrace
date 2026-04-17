@@ -68,7 +68,11 @@ const Dashboard = () => {
 
     const fetchAnalytics = async () => {
         try {
-            const response = await getDashboardAnalytics();
+            const params = {};
+            if (dateRange.startDate) params.startDate = dateRange.startDate;
+            if (dateRange.endDate) params.endDate = dateRange.endDate;
+
+            const response = await getDashboardAnalytics(params);
             setAnalytics(response.data);
         } catch (err) {
             console.error('Failed to fetch analytics', err);
@@ -155,16 +159,26 @@ const Dashboard = () => {
                             type="date"
                             name="startDate"
                             value={dateRange.startDate}
-                            onChange={handleDateChange}
-                            className="text-sm border-none focus:ring-0 text-slate-600 dark:text-white bg-slate-50 dark:bg-slate-800 rounded-md px-2 py-1 dark:[color-scheme:dark] w-[130px]"
+                            onChange={(e) => {
+                                const { name, value } = e.target;
+                                setDateRange(prev => ({ ...prev, [name]: value }));
+                                setActivePreset(null);
+                            }}
+                            className="text-sm dark:border-slate-600 border rounded p-2 [color-scheme:dark] w-[130px] bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                            style={{ colorScheme: 'dark' }}
                         />
                         <span className="text-slate-300 dark:text-slate-600">|</span>
                         <input
                             type="date"
                             name="endDate"
                             value={dateRange.endDate}
-                            onChange={handleDateChange}
-                            className="text-sm border-none focus:ring-0 text-slate-600 dark:text-white bg-slate-50 dark:bg-slate-800 rounded-md px-2 py-1 dark:[color-scheme:dark] w-[130px]"
+                            onChange={(e) => {
+                                const { name, value } = e.target;
+                                setDateRange(prev => ({ ...prev, [name]: value }));
+                                setActivePreset(null);
+                            }}
+                            className="text-sm dark:border-slate-600 border rounded p-2 [color-scheme:dark] w-[130px] bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                            style={{ colorScheme: 'dark' }}
                         />
                         {/* Clear Button */}
                         {(dateRange.startDate || dateRange.endDate) && (
@@ -292,7 +306,9 @@ const Dashboard = () => {
                                     <div className="pt-6 border-t border-slate-200 dark:border-slate-700">
                                         <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl space-y-3">
                                             <div className="flex items-center justify-between text-sm">
-                                                <span className="text-slate-500 dark:text-slate-400 font-medium">Gross Operational Profit</span>
+                                                <span className="text-slate-500 dark:text-slate-400 font-medium">
+                                                    {dateRange.startDate ? "Period Gross Profit" : "Gross Operational Profit"}
+                                                </span>
                                                 <span className="font-bold text-slate-700 dark:text-slate-300">{formatCurrency(sumOfProcessMargins)}</span>
                                             </div>
                                             <div className="flex items-center justify-between text-sm">

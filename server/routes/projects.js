@@ -70,6 +70,8 @@ router.get('/', async (req, res) => {
         const totalItems = parseInt(countResult.rows[0].count);
         const totalPages = Math.ceil(totalItems / limit);
 
+        const sliceDate = (val) => val instanceof Date ? val.toISOString().substring(0, 10) : val;
+
         // 3. Fetch Paginated Projects
         const projectsQuery = `
             SELECT p.*, c.name as client_name 
@@ -88,17 +90,27 @@ router.get('/', async (req, res) => {
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
         `;
         const projectsResult = await db.query(projectsQuery, [...queryParams, limit, offset]);
-        const projects = projectsResult.rows;
+        const projects = projectsResult.rows.map(p => {
+            p.start_date = sliceDate(p.start_date);
+            p.deadline = sliceDate(p.deadline);
+            return p;
+        });
 
         // 2. Fetch Resource Plans with Employee Details (Scoped to Org)
         const plansQuery = `
-            SELECT prp.*, e.monthly_salary, e.hourly_rate, e.usd_hourly_rate as default_usd_rate, e.name as employee_name, e.role 
+            SELECT prp.*, e.monthly_salary, e.hourly_rate, e.usd_hourly_rate as default_usd_rate, e.name as employee_name, e.role, e.joining_date 
             FROM project_resource_plans prp
             JOIN employees e ON prp.employee_id = e.id
             WHERE prp.organization_id = $1
         `;
         const plansResult = await db.query(plansQuery, [req.user.organizationId]);
-        const plans = plansResult.rows.map(p => ({ ...p, name: p.employee_name })); // Ensure 'name' is available for calculations
+        const plans = plansResult.rows.map(p => ({ 
+            ...p, 
+            name: p.employee_name,
+            joining_date: sliceDate(p.joining_date),
+            start_date: sliceDate(p.start_date),
+            end_date: sliceDate(p.end_date)
+        }));
 
         // 3. Fetch Unapproved Timesheet Logs for T&M Projections
         const unapprovedLogsQuery = `
@@ -132,8 +144,26 @@ router.get('/', async (req, res) => {
         const approvedLogsResult = await db.query(approvedLogsQuery, [req.user.organizationId]);
         const approvedLogs = approvedLogsResult.rows;
 
+        // 4. Fetch Historical Logs for total duration calculations
+        const historicalTotalQuery = `
+            SELECT t.project_id, t.employee_id, SUM(t.hours_worked) as total_hours
+            FROM timesheet_logs t
+            WHERE t.organization_id = $1
+            GROUP BY t.project_id, t.employee_id
+        `;
+        const historyResult = await db.query(historicalTotalQuery, [req.user.organizationId]);
+        const historyLogs = historyResult.rows;
+
         // 5. Merge and Calculate Costs
-        const projectsWithCosts = projects.map(project => calculateProjectFinancials(project, plans, unapprovedLogs, approvedLogs));
+        const projectsWithCosts = projects.map(project => calculateProjectFinancials(
+            project, 
+            plans, 
+            unapprovedLogs, 
+            approvedLogs, 
+            historyLogs, 
+            startDate, 
+            endDate
+        ));
 
         res.json({
             data: projectsWithCosts,

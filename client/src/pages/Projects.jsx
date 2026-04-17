@@ -6,10 +6,11 @@ import { toast } from 'sonner';
 import Modal from '../components/Modal';
 import ProjectForm from '../components/ProjectForm';
 import AssignResourceModal from '../components/AssignResourceModal';
-import { cn, formatCurrency } from '../lib/utils';
-import { getProjects, createProject, getClients, updateProjectStatus, deleteProject, addAllocation, getEmployeePerformance, offboardAllocation } from '../lib/api';
+import { cn, formatCurrency } from '@/lib/utils';
+import { getProjects, createProject, getClients, updateProjectStatus, deleteProject, addAllocation, getEmployeePerformance, offboardAllocation } from '@/lib/api';
+import { getSystemToday, calculateInclusiveDays } from '@/utils/dateUtils';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
-import EmployeePerformanceModal from '../components/EmployeePerformanceModal';
+import EmployeePerformanceModal from '@/components/EmployeePerformanceModal';
 
 const PROCESS_COLORS = {
     'T&M': 'bg-blue-100 text-blue-800 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800',
@@ -48,11 +49,8 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
 
     const calculateProgress = (start, end) => {
         if (!start || !end) return 0;
-        const startDate = new Date(start);
-        const endDate = new Date(end);
-        const today = new Date();
-        const totalDuration = endDate - startDate;
-        const elapsed = today - startDate;
+        const totalDuration = calculateInclusiveDays(start, end);
+        const elapsed = calculateInclusiveDays(start, getSystemToday());
 
         if (totalDuration <= 0) return 100;
         return Math.min(100, Math.max(0, (elapsed / totalDuration) * 100));
@@ -60,34 +58,28 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
 
     const getDaysRemaining = (end) => {
         if (!end) return null;
-        const today = new Date();
-        const endDate = new Date(end);
-        const diffTime = endDate - today;
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        const diffDays = calculateInclusiveDays(getSystemToday(), end);
         return diffDays;
     };
 
     const getTotalDuration = (start, end) => {
         if (!start || !end) return 0;
-        const startDate = new Date(start);
-        const endDate = new Date(end);
-        const diffTime = endDate - startDate;
-        return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        return calculateInclusiveDays(start, end);
     };
 
-    const progress = calculateProgress(project.start_date, project.deadline);
-    const daysLeft = getDaysRemaining(project.deadline);
-    const totalDays = getTotalDuration(project.start_date, project.deadline);
+    const progress = calculateProgress(project?.start_date, project?.deadline);
+    const daysLeft = getDaysRemaining(project?.deadline);
+    const totalDays = getTotalDuration(project?.start_date, project?.deadline);
     const isCritical = daysLeft !== null && progress > 80;
 
     // Health Indicator Logic
-    const margin = Number(project.margin) || 0;
-    const revenue = Number(project.revenue_earned) || 1; // Prevent div by zero
-    const marginPct = (margin / revenue) * 100;
+    const margin = Number(project?.margin) || 0;
+    const revenue = Number(project?.revenue_earned) || 0;
+    const marginPct = revenue > 0 ? (margin / revenue) * 100 : 0;
 
-    const isFixedBid = project.billing_type === 'Fixed Bid';
-    const isPastDeadline = isFixedBid && project.deadline && new Date() > new Date(project.deadline) && project.status !== 'Completed';
-    const isHighRisk = isFixedBid && Number(project.employee_costs) > (revenue * 0.8);
+    const isFixedBid = project?.billing_type === 'Fixed Bid';
+    const isPastDeadline = isFixedBid && project?.deadline && new Date() > new Date(project.deadline) && project.status !== 'Completed';
+    const isHighRisk = isFixedBid && Number(project?.employee_costs) > (revenue * 0.8);
 
     let borderClass = 'border border-slate-200 dark:border-white/10 shadow-sm hover:shadow-md';
     if (margin > 0) {
@@ -96,9 +88,9 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
         borderClass = 'border-2 border-rose-500 shadow-sm hover:shadow-md dark:shadow-[0_0_15px_-3px_rgba(244,63,94,0.2)] dark:hover:shadow-[0_0_20px_-2px_rgba(244,63,94,0.4)]';
     }
 
-    const totalLoggedHours = project.debug_info?.plans?.reduce((sum, p) => sum + (Number(p.totalHours) || 0), 0) || 0;
-    const budgetedValue = Number(project.quoted_bid_value) || 0;
-    const staffBurn = Number(project.employee_costs) || 0;
+    const totalLoggedHours = project?.debug_info?.plans?.reduce((sum, p) => sum + (Number(p.totalHours) || 0), 0) || 0;
+    const budgetedValue = Number(project?.quoted_bid_value) || 0;
+    const staffBurn = Number(project?.employee_costs) || 0;
     const burnPct = budgetedValue > 0 ? (staffBurn / budgetedValue) * 100 : 0;
 
     const visiblePlans = (project.debug_info?.plans || []).slice(0, 6);
@@ -170,15 +162,15 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
                         <div className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-0.5">
                             {isFixedBid ? 'Net Margin' : 'Margin'}
                         </div>
-                        <div className={cn("text-2xl font-bold whitespace-nowrap leading-none", Number(project.margin) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>
-                            {formatCurrency(project.margin)}
+                        <div className={cn("text-2xl font-bold whitespace-nowrap leading-none", Number(project?.margin) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>
+                            {formatCurrency(project?.margin)}
                         </div>
                     </div>
                 </div>
             </div>
 
             {/* Middle Fill: Budget Burn Bar */}
-            {budgetedHours > 0 && (
+            {budgetedValue > 0 && (
                 <div className="mt-1 mb-3 px-3 py-2 bg-slate-50 dark:bg-slate-800/80 rounded-lg border border-slate-100 dark:border-slate-700/50 shadow-inner">
                     <div className="flex justify-between items-center mb-1.5">
                         <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
@@ -448,11 +440,11 @@ const Projects = () => {
     const [page, setPage] = useState(1);
     const [pagination, setPagination] = useState({ total: 0, totalPages: 1, limit: 20 });
     const [error, setError] = useState(null);
-    const [dateRange, setDateRange] = useState({
-        startDate: '',
-        endDate: ''
-    });
-    const [activePreset, setActivePreset] = useState(null);
+    const [dateRange, setDateRange] = useState(() => ({
+        startDate: '2026-01-01',
+        endDate: new Date().toISOString().split('T')[0]
+    }));
+    const [activePreset, setActivePreset] = useState('ytd');
 
     const [projectToDelete, setProjectToDelete] = useState(null);
     const [isDeleting, setIsDeleting] = useState(false);
@@ -727,7 +719,7 @@ const Projects = () => {
 
                 <div className="flex flex-col sm:flex-row gap-3">
                     {/* Quick Selects */}
-                    <div className="flex bg-slate-100 dark:bg-slate-700/50 p-1 rounded-lg self-start sm:self-center">
+    <div className="flex bg-slate-100 dark:bg-slate-700/50 p-1 rounded-lg self-start sm:self-center">
                         {[
                             { label: 'This Month', range: 'month' },
                             { label: 'Last 30 Days', range: '30days' },
@@ -738,23 +730,30 @@ const Projects = () => {
                                 key={preset.range}
                                 onClick={() => {
                                     const now = new Date();
+                                    // Use local date parts to avoid UTC toISOString() shifting the date by TZ offset.
+                                    // e.g. In IST (UTC+5:30), Jan 1 00:00 local → Dec 31 18:30 UTC → '2025-12-31'
+                                    const toLocalDateStr = (d) => {
+                                        const y = d.getFullYear();
+                                        const m = String(d.getMonth() + 1).padStart(2, '0');
+                                        const day = String(d.getDate()).padStart(2, '0');
+                                        return `${y}-${m}-${day}`;
+                                    };
+
                                     let start, end = now;
 
                                     if (preset.range === 'month') {
                                         start = new Date(now.getFullYear(), now.getMonth(), 1);
                                     } else if (preset.range === '30days') {
-                                        start = new Date();
-                                        start.setDate(now.getDate() - 30);
+                                        start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
                                     } else if (preset.range === '6months') {
-                                        start = new Date();
-                                        start.setMonth(now.getMonth() - 6);
+                                        start = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
                                     } else if (preset.range === 'ytd') {
-                                        start = new Date(now.getFullYear(), 0, 1);
+                                        start = new Date(now.getFullYear(), 0, 1); // Jan 1
                                     }
 
                                     setDateRange({
-                                        startDate: start.toISOString().split('T')[0],
-                                        endDate: end.toISOString().split('T')[0]
+                                        startDate: toLocalDateStr(start),
+                                        endDate: toLocalDateStr(end)
                                     });
                                     setActivePreset(preset.range);
                                     setPage(1);
@@ -783,7 +782,8 @@ const Projects = () => {
                                 setActivePreset(null);
                                 setPage(1);
                             }}
-                            className="text-sm border-none focus:ring-0 text-slate-600 dark:text-slate-300 bg-transparent dark:[color-scheme:dark] p-0 w-[110px]"
+                            className="text-sm dark:border-slate-600 border rounded p-2 [color-scheme:dark] w-[130px] bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                            style={{ colorScheme: 'dark' }}
                         />
                         <span className="text-slate-300 dark:text-slate-600">|</span>
                         <input
@@ -795,7 +795,8 @@ const Projects = () => {
                                 setActivePreset(null);
                                 setPage(1);
                             }}
-                            className="text-sm border-none focus:ring-0 text-slate-600 dark:text-slate-300 bg-transparent dark:[color-scheme:dark] p-0 w-[110px]"
+                            className="text-sm dark:border-slate-600 border rounded p-2 [color-scheme:dark] w-[130px] bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                            style={{ colorScheme: 'dark' }}
                         />
                         {/* Clear Button */}
                         {(dateRange.startDate || dateRange.endDate) && (

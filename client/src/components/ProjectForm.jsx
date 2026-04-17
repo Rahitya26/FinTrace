@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Users, Briefcase, Plus, Trash2, Calculator } from 'lucide-react';
 import { getEmployees } from '../lib/api';
 import { formatCurrency, cn } from '../lib/utils';
+import { calculateInclusiveDays } from '../utils/dateUtils';
 
 const PROCESS_TYPES = ['T&M', 'Fixed Bid', 'Fixed Value'];
 
@@ -117,8 +118,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                     calculationEndDate = new Date(formData.deadline);
                 }
 
-                const diffTime = Math.max(0, calculationEndDate - start);
-                const durationMonths = diffTime / (1000 * 60 * 60 * 24 * 30.44);
+                const durationMonths = calculateInclusiveDays(start, calculationEndDate) / 30.0;
 
                 if (isTM) {
                     // T&M revenue projection for the UI simulation

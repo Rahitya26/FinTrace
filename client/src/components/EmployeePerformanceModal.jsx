@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine, Label } from 'recharts';
 import { toast } from 'sonner';
-import Modal from './Modal';
-import { cn, formatCurrency } from '../lib/utils';
-import { getEmployeePerformance } from '../lib/api';
+import Modal from '@/components/Modal';
+import { cn, formatCurrency } from '@/lib/utils';
+import { getEmployeePerformance } from '@/lib/api';
 
 const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName }) => {
     const defaultStart = `${new Date().getFullYear()}-01-01`;
-    const defaultEnd = new Date().toISOString().split('T')[0];
+    // Use local date parts to avoid UTC toISOString() shifting the date back by TZ offset (e.g. IST → Dec 31 instead of Jan 1)
+    const _now = new Date();
+    const defaultEnd = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
 
     const [localStartDate, setLocalStartDate] = useState(defaultStart);
     const [localEndDate, setLocalEndDate] = useState(defaultEnd);
@@ -49,7 +51,8 @@ const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName })
                     <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Start Date</label>
                     <input 
                         type="date" 
-                        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        className="bg-slate-700 text-white border border-slate-600 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        style={{ colorScheme: 'dark' }}
                         value={localStartDate}
                         onChange={(e) => setLocalStartDate(e.target.value)}
                     />
@@ -58,7 +61,8 @@ const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName })
                     <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">End Date</label>
                     <input 
                         type="date" 
-                        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        className="bg-slate-700 text-white border border-slate-600 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        style={{ colorScheme: 'dark' }}
                         value={localEndDate}
                         onChange={(e) => setLocalEndDate(e.target.value)}
                     />
@@ -91,7 +95,13 @@ const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName })
                                 <p className="text-lg font-semibold text-slate-700 dark:text-slate-300 mt-1">
                                     {formatCurrency(performanceData.periodStaffCost || 0)} <span className="text-xs font-normal text-slate-400">/total</span>
                                 </p>
-                                <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-tighter">Pro-Rata Fraction Evaluated</p>
+                                {performanceData.joiningDate && localStartDate && new Date(localStartDate) < new Date(performanceData.joiningDate) ? (
+                                    <p className="text-[10px] text-amber-500 font-bold mt-1 uppercase tracking-tighter bg-amber-50 dark:bg-amber-900/20 px-1 py-0.5 rounded w-fit inline-block">
+                                        Calculated from Joining Date ({performanceData.joiningDate.split('-').reverse().join('-')})
+                                    </p>
+                                ) : (
+                                    <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-tighter">Pro-Rata Fraction Evaluated</p>
+                                )}
                             </div>
                             <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 col-span-2 lg:col-span-1">
                                 <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Asset Status</p>

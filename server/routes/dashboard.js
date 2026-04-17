@@ -22,10 +22,17 @@ router.get('/summary', async (req, res) => {
   }
 
   try {
+    // Global sanitization layer: pg driver injects incorrect timezone logic natively!
+    const sliceDate = (val) => val instanceof Date ? val.toISOString().substring(0, 10) : val;
+    
     // 1. Fetch all applicable projects
     const projectsQuery = `SELECT * FROM projects ${projectsWhere}`;
     const projectsResult = await db.query(projectsQuery, queryParams);
-    const projects = projectsResult.rows;
+    const projects = projectsResult.rows.map(p => {
+        p.start_date = sliceDate(p.start_date);
+        p.deadline = sliceDate(p.deadline);
+        return p;
+    });
 
 
     // 3. Fetch all resource plans for these employees
@@ -36,7 +43,12 @@ router.get('/summary', async (req, res) => {
         WHERE prp.organization_id = $1
     `;
     const plansResult = await db.query(plansQuery, [req.user.organizationId]);
-    const allPlans = plansResult.rows;
+    const allPlans = plansResult.rows.map(p => {
+        p.joining_date = sliceDate(p.joining_date);
+        p.start_date = sliceDate(p.start_date);
+        p.end_date = sliceDate(p.end_date);
+        return p;
+    });
 
     // 4. Fetch Timesheet Logs (Approved and Unapproved)
     let logsWhere = 'WHERE t.organization_id = $1';
@@ -95,14 +107,39 @@ router.get('/summary', async (req, res) => {
     // 2. Fetch all employees to initialize the map
     const allActiveEmployees = await db.query("SELECT id, name, role, joining_date, monthly_salary FROM employees WHERE organization_id = $1", [req.user.organizationId]);
 
+    // User requested explicit YTD floor bound
+    const MIN_START_DATE = new Date('2026-01-01T00:00:00Z');
+    
+    // Explicitly compute the effective start date based on frontend filters, heavily clamped to 2026-01-01
+    let globalStartStr = startDate || '2026-01-01';
+    
+    // Safety check: ensure string never goes before 2026
+    if (new Date(globalStartStr) < MIN_START_DATE) {
+        globalStartStr = '2026-01-01';
+    }
+
     // Initialize Employee Map with FULL Period Salary (Company View)
     const employeeCostMap = {};
     allActiveEmployees.rows.forEach(emp => {
+        // Enforce Math.max boundary on joining_date to guarantee no December leaks
+        let safeJoiningDate = emp.joining_date;
+        if (safeJoiningDate) {
+            // Fix PG UTC bleeding (e.g. 18:30Z turning into next day in IST) by strictly using the literal ISO prefix.
+            if (safeJoiningDate instanceof Date) {
+                safeJoiningDate = safeJoiningDate.toISOString().substring(0, 10);
+            }
+            if (new Date(safeJoiningDate) < MIN_START_DATE) {
+                safeJoiningDate = '2026-01-01';
+            }
+        }
+
         const periodSalary = calculateStaffCost(
             emp.monthly_salary,
-            startDate || null, // fallback in utility
+            globalStartStr,
             endDate || null,
-            emp.joining_date,
+            globalStartStr, // Intersection Filter Start
+            endDate || null,   // Intersection Filter End
+            safeJoiningDate,
             emp.name
         );
         employeeCostMap[emp.id] = {
@@ -167,7 +204,8 @@ router.get('/summary', async (req, res) => {
 
     // Total Payroll (Sum of all individual totalCosts)
     const totalPayrollCost = Object.values(employeeCostMap).reduce((sum, emp) => sum + emp.totalCost, 0);
-    const totalBenchCost = Math.max(0, totalPayrollCost - totalProjectCosts);
+    // User dictated: Bench Time strictly equals Total Staff Costs - Total Project Burn
+    const totalBenchCost = totalPayrollCost - totalProjectCosts;
 
     // 8. Company Expenses
     const expensesResult = await db.query(`SELECT SUM(amount) as total_expenses FROM company_expenses ${expensesWhere} `, queryParams);
@@ -177,8 +215,8 @@ router.get('/summary', async (req, res) => {
       startDate: startDate || null,
       endDate: endDate || null,
       totalRevenue: Math.round(totalRevenue),
-      totalProjectCosts: Math.round(totalPayrollCost), // Total Salary paid
-      totalAllocatedCosts: Math.round(totalProjectCosts), // sum of fractions
+      totalProjectCosts: Math.round(totalPayrollCost), // Total Salary paid for period
+      totalAllocatedCosts: Math.round(totalProjectCosts), // Sum of project pro-rata burns
       totalBenchCost: Math.round(totalBenchCost),
       totalCompanyExpenses: Math.round(totalExpensesValue),
       processTypeBreakdown,
@@ -192,14 +230,24 @@ router.get('/summary', async (req, res) => {
   }
 });
 
-// GET /api/dashboard/analytics
 router.get('/analytics', async (req, res) => {
-  try {
+    try {
+    const { startDate, endDate } = req.query;
+    let monthsFilter = `date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'`;
+    let monthsEnd = `date_trunc('month', CURRENT_DATE)`;
+    let expensesFilter = `date >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'`;
+
+    if (startDate && endDate) {
+        monthsFilter = `'${startDate}'::date`;
+        monthsEnd = `'${endDate}'::date`;
+        expensesFilter = `date >= '${startDate}'::date AND date <= '${endDate}'::date`;
+    }
+
     const trendQuery = `
       WITH months AS (
         SELECT generate_series(
-          date_trunc('month', CURRENT_DATE) - INTERVAL '5 months',
-          date_trunc('month', CURRENT_DATE),
+          date_trunc('month', ${monthsFilter}),
+          date_trunc('month', ${monthsEnd}),
           '1 month'::interval
         ) as month
       ),
@@ -241,7 +289,7 @@ router.get('/analytics', async (req, res) => {
           date_trunc('month', date) as month,
           SUM(amount) as total_expenses
         FROM company_expenses
-        WHERE date >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'
+        WHERE ${expensesFilter}
           AND organization_id = $1
         GROUP BY 1
       )
@@ -261,7 +309,7 @@ router.get('/analytics', async (req, res) => {
     category as name,
       SUM(amount) as value
       FROM company_expenses
-      WHERE date >= date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'
+      WHERE ${expensesFilter}
       AND organization_id = $1
       GROUP BY category
       ORDER BY value DESC

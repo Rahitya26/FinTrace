@@ -92,8 +92,10 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
 
             const planBurn = fraction * calculateStaffCost(
                 monthlySalary,
-                plan.start_date || startDate,
-                plan.deadline || endDate, // Note: using project/plan deadline as logical bound
+                project.start_date, // Enforce project bounds strictly
+                project.deadline,   // Enforce project bounds strictly
+                startDate,          // Global Filter Start
+                endDate,            // Global Filter End
                 plan.joining_date,
                 plan.name
             );

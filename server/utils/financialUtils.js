@@ -1,3 +1,5 @@
+const { calculateInclusiveDays, SYSTEM_TODAY } = require('@/utils/dateUtils');
+
 const getMonthsInPeriod = (startDate, endDate) => {
     if (!startDate || !endDate) return 1;
     const s = new Date(startDate);
@@ -41,14 +43,25 @@ const getBusinessHoursInMonth = (year, month) => {
 
 const toLocalDate = (dateStr) => {
     if (!dateStr) return null;
-    const d = new Date(dateStr);
-    // If it's just a YYYY-MM-DD string, Date(string) can be UTC.
-    // Ensure we treat it as local.
+    
     if (typeof dateStr === 'string' && dateStr.length === 10) {
         return new Date(`${dateStr}T12:00:00`); // Mid-day to avoid TZ shifts
     }
+    
+    const d = new Date(dateStr);
+    
+    // Fix: If a purely DATE column was retrieved from pg, it is typically UTC midnight.
+    // In western timezones (e.g. USA), this bleeds into the previous day (e.g. Jan 14 19:00).
+    // Reconstruct it using UTC parts to firmly pin it to the correct local day.
+    if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) {
+        return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0);
+    }
+    
     return d;
 };
+
+// Normalize any Date to local midnight (00:00:00) to guarantee integer day diffs.
+const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 
 const getActiveMonthsForEmployee = (employeeId, periodStart, periodEnd, allPlans, allLogs) => {
     const pStart = toLocalDate(periodStart);
@@ -111,11 +124,12 @@ const calculateFixedBidRevenueShare = (plan, periodStart, periodEnd) => {
     return overlaps ? totalShare : 0;
 };
 
+
+
 const calculateLinearRevenue = (totalValue, projectStart, projectEnd, filterStart, filterEnd, joiningDate, allocationPercentage = 100, empName = 'Employee') => {
     try {
         const pStart = toLocalDate(projectStart);
         const pEnd = toLocalDate(projectEnd);
-        // FALLBACK: If no filter provided, use project range as the "filter"
         const fStart = toLocalDate(filterStart) || pStart;
         const fEnd = toLocalDate(filterEnd) || pEnd;
         
@@ -123,21 +137,15 @@ const calculateLinearRevenue = (totalValue, projectStart, projectEnd, filterStar
 
         if (!pStart || !pEnd || !fStart || !fEnd) return 0;
 
-        const totalDurationMonths = Math.max(1, (pEnd.getFullYear() - pStart.getFullYear()) * 12 + (pEnd.getMonth() - pStart.getMonth()) + 1);
-        const monthlyRevenue = (Number(totalValue) || 0) / totalDurationMonths;
-
         const overlapStart = new Date(Math.max(pStart.getTime(), fStart.getTime(), jDate.getTime()));
         const overlapEnd = new Date(Math.min(pEnd.getTime(), fEnd.getTime()));
 
         if (overlapEnd >= overlapStart) {
-            const diffTime = Math.abs(overlapEnd - overlapStart);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-            const revenue = (monthlyRevenue / 30) * diffDays * (Number(allocationPercentage || 100) / 100);
-
-            if (empName.includes("John Wick")) {
-                console.log(`Calculating ${empName} Revenue: Start ${overlapStart.toDateString()}, End ${overlapEnd.toDateString()}, Days: ${diffDays}, Revenue: ${Math.round(revenue)}`);
-            }
-            return revenue;
+            const activeDays = calculateInclusiveDays(overlapStart, overlapEnd);
+            const totalProjectDays = calculateInclusiveDays(pStart, pEnd);
+            
+            let revenue = (activeDays / totalProjectDays) * (Number(totalValue) || 0) * (Number(allocationPercentage || 100) / 100);
+            return Math.round(revenue);
         }
     } catch (e) {
         console.error("Error in calculateLinearRevenue:", e);
@@ -145,25 +153,28 @@ const calculateLinearRevenue = (totalValue, projectStart, projectEnd, filterStar
     return 0;
 };
 
-const calculateStaffCost = (salary, start, end, joiningDate, empName = 'Employee') => {
+const calculateStaffCost = (salary, planStart, planEnd, filterStart, filterEnd, joiningDate, empName = 'Employee') => {
     try {
-        const s = toLocalDate(start);
-        const e = toLocalDate(end);
+        const pStart = toLocalDate(planStart);
+        const pEnd = toLocalDate(planEnd);
+        const fStart = toLocalDate(filterStart) || pStart;
+        const fEnd = toLocalDate(filterEnd) || pEnd;
         const j = toLocalDate(joiningDate) || new Date(2026, 0, 1);
 
-        if (!s || !e) return 0;
+        if (!pStart || !pEnd || !fStart || !fEnd) return 0;
 
-        // Salary costs only start from the joining date
-        const effectiveStart = s < j ? j : s;
+        const overlapStart = new Date(Math.max(pStart.getTime(), fStart.getTime(), j.getTime()));
+        let overlapEnd = new Date(Math.min(pEnd.getTime(), fEnd.getTime()));
 
-        if (e >= effectiveStart) {
-            const diffTime = Math.abs(e - effectiveStart);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            const cost = (Number(salary) || 0) * (diffDays / 30);
+        // Enforce 'Today' in Payroll: Never calculate future days for current month
+        const localToday = SYSTEM_TODAY;
+        if (overlapEnd > localToday) {
+            overlapEnd = localToday;
+        }
 
-            if (empName.includes("John Wick")) {
-                console.log(`Calculating ${empName} Salary: Start ${effectiveStart.toDateString()}, End ${e.toDateString()}, Days: ${diffDays}, Cost: ${Math.round(cost)}`);
-            }
+        if (overlapEnd >= overlapStart) {
+            const activeDays = calculateInclusiveDays(overlapStart, overlapEnd);
+            const cost = (Number(salary) || 0) / 30 * activeDays;
             return cost;
         }
     } catch (err) {
@@ -171,6 +182,9 @@ const calculateStaffCost = (salary, start, end, joiningDate, empName = 'Employee
     }
     return 0;
 };
+
+
+
 
 
 
