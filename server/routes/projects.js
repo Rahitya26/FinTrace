@@ -34,7 +34,7 @@ router.get('/', async (req, res) => {
         }
 
         if (type) {
-            whereClauses.push(`p.type = $${paramIndex}`);
+            whereClauses.push(`p.billing_type = $${paramIndex}`);
             queryParams.push(type);
             paramIndex++;
         }

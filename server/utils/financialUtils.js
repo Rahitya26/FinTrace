@@ -138,7 +138,13 @@ const calculateLinearRevenue = (totalValue, projectStart, projectEnd, filterStar
         if (!pStart || !pEnd || !fStart || !fEnd) return 0;
 
         const overlapStart = new Date(Math.max(pStart.getTime(), fStart.getTime(), jDate.getTime()));
-        const overlapEnd = new Date(Math.min(pEnd.getTime(), fEnd.getTime()));
+        let overlapEnd = new Date(Math.min(pEnd.getTime(), fEnd.getTime()));
+
+        // Enforce 'Today' in Revenue: Never calculate future days for current month
+        const localToday = SYSTEM_TODAY;
+        if (overlapEnd > localToday) {
+            overlapEnd = localToday;
+        }
 
         if (overlapEnd >= overlapStart) {
             const activeDays = calculateInclusiveDays(overlapStart, overlapEnd);
@@ -156,9 +162,10 @@ const calculateLinearRevenue = (totalValue, projectStart, projectEnd, filterStar
 const calculateStaffCost = (salary, planStart, planEnd, filterStart, filterEnd, joiningDate, empName = 'Employee') => {
     try {
         const pStart = toLocalDate(planStart);
-        const pEnd = toLocalDate(planEnd);
+        // Fallback for ongoing projects
+        const pEnd = planEnd ? toLocalDate(planEnd) : new Date();
         const fStart = toLocalDate(filterStart) || pStart;
-        const fEnd = toLocalDate(filterEnd) || pEnd;
+        const fEnd = filterEnd ? toLocalDate(filterEnd) : pEnd;
         const j = toLocalDate(joiningDate) || new Date(2026, 0, 1);
 
         if (!pStart || !pEnd || !fStart || !fEnd) return 0;

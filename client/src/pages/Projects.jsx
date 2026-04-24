@@ -367,23 +367,53 @@ const ProjectCard = ({ project, onStatusChange, onDelete, onAddResource, onViewT
                                             <span className="text-[9px] uppercase tracking-wider text-primary bg-primary-50 dark:bg-primary-900/30 px-1.5 py-0.5 rounded cursor-help font-bold hover:bg-primary-100 transition-colors">
                                                 Staff
                                             </span>
-                                            <div className="absolute bottom-full left-0 mb-2 w-max min-w-[200px] max-w-none bg-slate-800 text-white text-xs rounded-lg py-2 px-3 opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none z-50 shadow-xl text-left font-medium">
-                                                <div className="mb-1.5 pb-1.5 border-b border-slate-700 text-[10px] text-slate-400 uppercase tracking-wider font-bold">
-                                                    Internal Cost Split
+                                            <div className="absolute bottom-full left-0 mb-2 w-max min-w-[380px] max-w-none bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs rounded-xl p-3 opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none z-50 shadow-2xl backdrop-blur-xl text-left font-medium">
+                                                <div className="mb-3 pb-2 border-b border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 uppercase tracking-widest font-black flex justify-between items-center">
+                                                    <span>Performance Hub</span>
+                                                    <span className="text-primary/70">{project.debug_info.plans.length} Resources</span>
                                                 </div>
-                                                <div className="space-y-1 mb-2">
-                                                    {project.debug_info.plans.map((p, idx) => (
-                                                        <div key={idx} className="flex justify-between items-center gap-4">
-                                                            <span className="text-slate-300 font-bold whitespace-nowrap">{p.name || 'Unknown'}</span>
-                                                            <span className="text-slate-200 whitespace-nowrap pr-3">{formatCurrency(p.totalPlanCost || 0)}</span>
-                                                        </div>
-                                                    ))}
+                                                <div className="space-y-2 mb-3">
+                                                    {project.debug_info.plans.map((p, idx) => {
+                                                        const roi = (p.totalPlanRevenue || 0) - (p.totalPlanCost || 0);
+                                                        const joiningDateStr = p.joining_date ? p.joining_date.split('-').reverse().join('-') : 'Unknown';
+                                                        return (
+                                                            <div key={idx} className="flex justify-between items-center gap-4 bg-slate-50/50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-700/50 rounded-lg p-2.5 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-800/80 transition-colors">
+                                                                <div className="flex flex-col min-w-[120px]">
+                                                                    <span className="text-slate-900 dark:text-slate-100 font-bold text-sm whitespace-nowrap">{p.name || 'Unknown'}</span>
+                                                                    <span className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 whitespace-nowrap">
+                                                                        {p.role || 'Unassigned'} • Joined: {joiningDateStr}
+                                                                    </span>
+                                                                </div>
+                                                                
+                                                                <div className="flex gap-4 items-center">
+                                                                    <div className="flex flex-col items-end">
+                                                                        <span className="text-[9px] font-bold uppercase tracking-wider text-rose-500/70 mb-0.5">Period Cost</span>
+                                                                        <span className="text-rose-600 dark:text-rose-400 font-semibold tabular-nums">{formatCurrency(p.totalPlanCost || 0)}</span>
+                                                                    </div>
+                                                                    <div className="w-[1px] h-6 bg-slate-200 dark:bg-slate-700"></div>
+                                                                    <div className="flex flex-col items-end">
+                                                                        <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-500/70 mb-0.5">Projected Rev</span>
+                                                                        <span className="text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">{formatCurrency(p.totalPlanRevenue || 0)}</span>
+                                                                    </div>
+                                                                    <div className="ml-2 pl-2 border-l border-slate-200 dark:border-slate-700">
+                                                                        <span className={cn(
+                                                                            "px-2 py-1 rounded-full text-[10px] font-bold whitespace-nowrap border shadow-sm",
+                                                                            roi >= 0 ? "bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800/50" 
+                                                                                     : "bg-rose-50 text-rose-600 border-rose-200 dark:bg-rose-900/20 dark:text-rose-400 dark:border-rose-800/50"
+                                                                        )}>
+                                                                            {roi >= 0 ? '+' : ''}{formatCurrency(roi)}
+                                                                        </span>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
                                                 </div>
-                                                <div className="flex justify-between items-center pt-1.5 border-t border-slate-700 font-bold text-rose-400 mt-2">
-                                                    <span className="whitespace-nowrap">Total Approved</span>
-                                                    <span className="whitespace-nowrap pr-3">{formatCurrency(project.employee_costs)}</span>
+                                                <div className="flex justify-between items-center pt-2 border-t border-slate-100 dark:border-slate-800 font-black text-slate-800 dark:text-slate-200 mt-1">
+                                                    <span className="whitespace-nowrap uppercase tracking-wider text-[10px] text-slate-500">Total Staff Burn</span>
+                                                    <span className="whitespace-nowrap pr-1 text-rose-600 dark:text-rose-400">{formatCurrency(project.employee_costs)}</span>
                                                 </div>
-                                                <div className="absolute top-full left-4 border-4 border-transparent border-t-slate-800"></div>
+                                                <div className="absolute top-full left-4 border-8 border-transparent border-t-white dark:border-t-slate-900 filter drop-shadow-xl"></div>
                                             </div>
                                         </div>
                                     );
@@ -985,31 +1015,49 @@ const Projects = () => {
                         </div>
 
                         <div className="space-y-3">
-                            {selectedTeamProject?.debug_info?.plans?.map((p, idx) => (
-                                <button
-                                    key={idx}
-                                    onClick={() => openPerformanceModal(p)}
-                                    className="w-full flex items-center justify-between p-3 bg-white dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-primary/50 hover:shadow-md hover:shadow-primary/5 transition-all group text-left"
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-900/40 text-slate-600 dark:text-slate-400 flex items-center justify-center font-bold text-sm border border-slate-200 dark:border-slate-800/50">
-                                            {p.name.charAt(0).toUpperCase()}
-                                        </div>
-                                        <div>
-                                            <h5 className="text-sm font-bold text-slate-900 dark:text-white transition-colors uppercase tracking-tight">{p.name}</h5>
-                                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{p.role || 'Team Member'}</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center gap-6 text-right">
-                                        <div className="min-w-[100px]">
-                                            <div className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter mb-0.5">Projected Revenue</div>
-                                            <div className="text-xs font-mono text-emerald-600 dark:text-emerald-400 font-bold">
-                                                {formatCurrency(p.totalPlanRevenue || 0)}
+                            {selectedTeamProject?.debug_info?.plans?.map((p, idx) => {
+                                const roi = (p.totalPlanRevenue || 0) - (p.totalPlanCost || 0);
+                                const joiningDateStr = p.joining_date ? p.joining_date.split('-').reverse().join('-') : 'Unknown';
+                                return (
+                                    <button
+                                        key={idx}
+                                        onClick={() => openPerformanceModal(p)}
+                                        className="w-full flex items-center justify-between p-3.5 bg-white/60 dark:bg-slate-800/60 backdrop-blur-md rounded-xl border border-slate-200/60 dark:border-slate-700/60 hover:border-primary/40 hover:bg-white dark:hover:bg-slate-800 hover:shadow-lg hover:shadow-slate-200/20 dark:hover:shadow-none transition-all group text-left cursor-pointer"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-200 flex items-center justify-center font-black text-sm border border-slate-200/50 dark:border-slate-700/50 shadow-sm shrink-0">
+                                                {p.name.charAt(0).toUpperCase()}
+                                            </div>
+                                            <div className="flex flex-col">
+                                                <h5 className="text-sm font-black text-slate-900 dark:text-white transition-colors uppercase tracking-tight">{p.name}</h5>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-tight mt-0.5">
+                                                    {p.role || 'Team Member'} • Joined: {joiningDateStr}
+                                                </p>
                                             </div>
                                         </div>
-                                    </div>
-                                </button>
-                            ))}
+                                        <div className="flex items-center gap-5 text-right shrink-0">
+                                            <div className="flex flex-col items-end">
+                                                <span className="text-[9px] font-bold uppercase tracking-wider text-rose-500/80 mb-0.5">Period Cost</span>
+                                                <span className="text-sm text-rose-600 dark:text-rose-400 font-bold tabular-nums">{formatCurrency(p.totalPlanCost || 0)}</span>
+                                            </div>
+                                            <div className="w-[1px] h-8 bg-slate-200 dark:bg-slate-700"></div>
+                                            <div className="flex flex-col items-end">
+                                                <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-500/80 mb-0.5">Projected Rev</span>
+                                                <span className="text-sm text-emerald-600 dark:text-emerald-400 font-bold tabular-nums">{formatCurrency(p.totalPlanRevenue || 0)}</span>
+                                            </div>
+                                            <div className="ml-2 pl-3 border-l border-slate-200 dark:border-slate-700">
+                                                <span className={cn(
+                                                    "px-2.5 py-1 rounded-full text-xs font-black whitespace-nowrap border shadow-sm",
+                                                    roi >= 0 ? "bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800/60" 
+                                                             : "bg-rose-50 text-rose-600 border-rose-200 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800/60"
+                                                )}>
+                                                    {roi >= 0 ? '+' : ''}{formatCurrency(roi)}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </button>
+                                );
+                            })}
                             {(!selectedTeamProject?.debug_info?.plans || selectedTeamProject?.debug_info?.plans?.length === 0) && (
                                 <div className="p-8 text-center bg-slate-50 dark:bg-slate-900/30 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
                                     <p className="text-sm text-slate-400 italic">No resources assigned to this project.</p>

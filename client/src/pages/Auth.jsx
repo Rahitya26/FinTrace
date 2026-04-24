@@ -266,6 +266,7 @@ const Auth = () => {
                     display: block;
                     width: 100%;
                     padding: 0.5rem 0.75rem;
+                    padding-left: 2.5rem !important;
                     background: rgba(255,255,255,0.07);
                     border: 1px solid rgba(255,255,255,0.12);
                     border-radius: 0.5rem;

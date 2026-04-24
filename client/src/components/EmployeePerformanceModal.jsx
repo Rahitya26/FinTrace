@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine, Label } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine, Label, Legend } from 'recharts';
 import { toast } from 'sonner';
 import Modal from '@/components/Modal';
 import { cn, formatCurrency } from '@/lib/utils';
@@ -40,32 +40,69 @@ const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName })
         }
     };
 
+    const setPresetDate = (preset) => {
+        const _now = new Date();
+        const end = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
+        let start = '';
+
+        if (preset === 'This Month') {
+            start = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-01`;
+        } else if (preset === 'Last 30 Days') {
+            const past = new Date(_now);
+            past.setDate(past.getDate() - 30);
+            start = `${past.getFullYear()}-${String(past.getMonth() + 1).padStart(2, '0')}-${String(past.getDate()).padStart(2, '0')}`;
+        } else if (preset === 'Last 6 Months') {
+            const past = new Date(_now);
+            past.setMonth(past.getMonth() - 6);
+            start = `${past.getFullYear()}-${String(past.getMonth() + 1).padStart(2, '0')}-${String(past.getDate()).padStart(2, '0')}`;
+        } else if (preset === 'YTD') {
+            start = `${_now.getFullYear()}-01-01`;
+        }
+        
+        setLocalStartDate(start);
+        setLocalEndDate(end);
+    };
+
     return (
         <Modal
             isOpen={isOpen}
             onClose={onClose}
             title={`${employeeName} - Performance Track Record`}
+            maxWidth="max-w-3xl"
         >
-            <div className="flex items-center gap-4 mb-6 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
-                <div className="flex flex-col">
-                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Start Date</label>
-                    <input 
-                        type="date" 
-                        className="bg-slate-700 text-white border border-slate-600 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                        style={{ colorScheme: 'dark' }}
-                        value={localStartDate}
-                        onChange={(e) => setLocalStartDate(e.target.value)}
-                    />
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-4">
+                    <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Start Date</label>
+                        <input 
+                            type="date" 
+                            className="bg-slate-700 text-white border border-slate-600 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                            style={{ colorScheme: 'dark' }}
+                            value={localStartDate}
+                            onChange={(e) => setLocalStartDate(e.target.value)}
+                        />
+                    </div>
+                    <div className="flex flex-col">
+                        <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">End Date</label>
+                        <input 
+                            type="date" 
+                            className="bg-slate-700 text-white border border-slate-600 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                            style={{ colorScheme: 'dark' }}
+                            value={localEndDate}
+                            onChange={(e) => setLocalEndDate(e.target.value)}
+                        />
+                    </div>
                 </div>
-                <div className="flex flex-col">
-                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">End Date</label>
-                    <input 
-                        type="date" 
-                        className="bg-slate-700 text-white border border-slate-600 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                        style={{ colorScheme: 'dark' }}
-                        value={localEndDate}
-                        onChange={(e) => setLocalEndDate(e.target.value)}
-                    />
+                <div className="flex flex-wrap gap-2">
+                    {['This Month', 'Last 30 Days', 'Last 6 Months', 'YTD'].map(preset => (
+                        <button
+                            key={preset}
+                            onClick={() => setPresetDate(preset)}
+                            className="px-3 py-1.5 text-xs font-medium bg-white dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 border border-slate-200 dark:border-slate-600 rounded-full transition-colors text-slate-700 dark:text-slate-300"
+                        >
+                            {preset}
+                        </button>
+                    ))}
                 </div>
             </div>
 
@@ -137,6 +174,12 @@ const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName })
                                         contentStyle={{ backgroundColor: '#1e293b', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)' }}
                                         itemStyle={{ fontSize: '14px', fontWeight: 500, color: '#fff' }}
                                         labelStyle={{ color: '#94a3b8', marginBottom: '4px' }}
+                                    />
+                                    <Legend 
+                                        verticalAlign="top" 
+                                        height={36} 
+                                        iconType="circle"
+                                        wrapperStyle={{ fontSize: '12px', color: '#64748B', fontWeight: 500 }}
                                     />
                                     <Bar dataKey="revenue" name="Revenue" fill="#10b981" radius={[4, 4, 0, 0]} barSize={20} />
                                     <Bar dataKey="cost" name="Salary Cost" fill="#3b82f6" radius={[4, 4, 0, 0]} barSize={20} />

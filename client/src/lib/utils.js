@@ -25,6 +25,6 @@ export const getThisMonthRange = () => {
     
     return {
         startDate: formatLocalDate(start),
-        endDate: formatLocalDate(end)
+        endDate: formatLocalDate(new Date())
     };
 };

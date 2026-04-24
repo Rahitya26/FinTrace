@@ -1,7 +1,7 @@
 export const getSystemToday = () => new Date();
 
 export const calculateInclusiveDays = (startDate, endDate) => {
-    if (!startDate || !endDate) return 0;
+    if (!startDate) return 0;
     
     // Safely parse literal strings to prevent Timezone bleeds turning April 16 into April 15
     const getLocalObj = (val) => {
@@ -13,7 +13,7 @@ export const calculateInclusiveDays = (startDate, endDate) => {
     };
 
     const startObj = getLocalObj(startDate);
-    let endObj = getLocalObj(endDate);
+    let endObj = endDate ? getLocalObj(endDate) : new Date();
     
     // User requested absolute forcing for April 16th Audit
     const sys = new Date();

@@ -56,24 +56,12 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
 
             const activeMonthsInPeriod = getActiveMonthsForEmployee(empId, startDate, endDate, allPlans, allApprovedLogs);
 
-            // 2. Revenue Recognition (Individual - Restricted by Joining Date)
-            if (isFixedBid) {
-                const totalAlloc = totalAllocationOnProject > 0 ? totalAllocationOnProject : 100;
-                const weight = (Number(plan.allocation_percentage) || 0) / totalAlloc;
-                
-                approvedRevenue = calculateLinearRevenue(
-                    project.quoted_bid_value || project.fixed_contract_value,
-                    project.start_date,
-                    project.deadline,
-                    startDate,
-                    endDate,
-                    plan.joining_date,
-                    (Number(plan.allocation_percentage) || 0) * (100 / totalAlloc),
-                    plan.name
-                );
-            } else {
-                approvedRevenue = empProjectLogs.reduce((sum, log) => sum + (Number(log.total_inr_revenue) || 0), 0);
-            }
+            // 2. Revenue Recognition (Unified Allocation Share logic)
+            // Formula: Total Project Revenue for Period * (Allocation % / 100)
+            const alloc = Number(plan.allocation_percentage) || 100;
+            const fraction = alloc / 100;
+
+            approvedRevenue = companyRevenueEarned * fraction;
 
             totalRevenueAccrued += approvedRevenue;
 
@@ -87,9 +75,6 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
             }
 
             // 3. Burn Calculation: Standardized Pro-Rata
-            const alloc = Number(plan.allocation_percentage) || 100;
-            const fraction = alloc / 100;
-
             const planBurn = fraction * calculateStaffCost(
                 monthlySalary,
                 project.start_date, // Enforce project bounds strictly
@@ -110,6 +95,7 @@ const calculateProjectFinancials = (project, allPlans, allUnapprovedLogs = [], a
                 name: plan.name,
                 role: plan.role,
                 employee_id: empId,
+                joining_date: plan.joining_date,
                 salary: monthlySalary,
                 internalHourlyRate: internalHourlyRate,
                 totalHours: periodHours,
