@@ -63,7 +63,6 @@ const calculateInclusiveDays = (startDate, endDate) => {
     
     // Evaluate without a generic +1 appended over top of the already inclusive components
     const result = Math.floor(totalDays);
-    console.log('Counting Days:', { start: startObj.toLocaleDateString(), end: endObj.toLocaleDateString(), total: result });
     return result;
 };
 
