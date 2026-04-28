@@ -38,7 +38,9 @@ const Auth = () => {
             toast.success('Logged in successfully!');
             navigate('/');
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Invalid email or password');
+            const errData = err.response?.data?.error;
+            const errMsg = typeof errData === 'object' ? errData.message : errData;
+            toast.error(errMsg || 'Invalid email or password');
         } finally {
             setLoading(false);
         }
@@ -53,7 +55,9 @@ const Auth = () => {
             toast.success('Verification code sent to your email');
             setOtpStep(2);
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Failed to send verification code');
+            const errData = err.response?.data?.error;
+            const errMsg = typeof errData === 'object' ? errData.message : errData;
+            toast.error(errMsg || 'Failed to send verification code');
         } finally {
             setLoading(false);
         }
@@ -74,7 +78,9 @@ const Auth = () => {
             toast.success(isSignup ? 'Account created successfully!' : 'Logged in successfully!');
             navigate('/');
         } catch (err) {
-            toast.error(err.response?.data?.error || 'Verification failed');
+            const errData = err.response?.data?.error;
+            const errMsg = typeof errData === 'object' ? errData.message : errData;
+            toast.error(errMsg || 'Verification failed');
         } finally {
             setLoading(false);
         }
