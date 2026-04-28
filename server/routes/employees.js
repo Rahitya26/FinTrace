@@ -336,71 +336,76 @@ router.get('/', async (req, res) => {
         const countRes = await db.query(countQuery, queryParams);
         const total = parseInt(countRes.rows[0].count);
 
-        const dataQuery = `
-            SELECT e.* 
-            FROM employees e 
-            ${whereClause} 
-            ORDER BY e.name ASC 
-            LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}
-        `;
-        const dataRes = await db.query(dataQuery, [...queryParams, limit, offset]);
-        const employees = dataRes.rows;
-
-        let tStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-        let tEnd = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0, 23, 59, 59);
+        let tStart = '2026-01-01';
+        let tEnd = new Date().toISOString().substring(0,10);
 
         if (startDate && endDate) {
-            tStart = new Date(`${startDate}T00:00:00`);
-            tEnd = new Date(`${endDate}T23:59:59`);
+            tStart = startDate;
+            tEnd = endDate;
         }
 
-        const enhancedEmployees = await Promise.all(employees.map(async (emp) => {
-            const empId = emp.id;
-            const monthlySalary = Number(emp.monthly_salary) || 0;
-            const jDate = new Date(emp.joining_date || '2026-02-01');
+        const employeeAggQuery = `
+WITH BaseEmployees AS (
+    SELECT e.* 
+    FROM employees e 
+    ${whereClause} 
+    ORDER BY e.name ASC 
+    LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}
+),
+EmpPayroll AS (
+    SELECT id, 
+           (monthly_salary / 30.0) * GREATEST(0, (LEAST(COALESCE($${queryParams.length + 4}::date, CURRENT_DATE), CURRENT_DATE) - GREATEST(COALESCE($${queryParams.length + 3}::date, '2026-01-01'::date), COALESCE(joining_date, '1970-01-01'::date))) + 1) as total_cost
+    FROM BaseEmployees
+),
+EmpRevenueTM AS (
+    SELECT t.employee_id, SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as tm_rev
+    FROM timesheet_logs t
+    JOIN BaseEmployees e ON t.employee_id = e.id
+    JOIN timesheet_approvals ta ON t.approval_id = ta.id
+    LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
+    JOIN projects p ON t.project_id = p.id
+    WHERE t.organization_id = $1 
+      AND p.billing_type != 'Fixed Bid'
+      AND ($${queryParams.length + 3}::date IS NULL OR t.date >= $${queryParams.length + 3}::date)
+      AND ($${queryParams.length + 4}::date IS NULL OR t.date <= $${queryParams.length + 4}::date)
+    GROUP BY t.employee_id
+),
+ProjectTotalAllocations AS (
+    SELECT project_id, GREATEST(100.0, SUM(allocation_percentage)) as total_alloc
+    FROM project_resource_plans
+    WHERE organization_id = $1
+    GROUP BY project_id
+),
+EmpRevenueFB AS (
+    SELECT 
+        prp.employee_id,
+        SUM(
+            ((GREATEST(0, (LEAST(COALESCE(p.deadline, CURRENT_DATE), COALESCE($${queryParams.length + 4}::date, CURRENT_DATE)) - GREATEST(p.start_date, COALESCE($${queryParams.length + 3}::date, '2026-01-01'::date), COALESCE(e.joining_date, '1970-01-01'::date))) + 1)::NUMERIC) / GREATEST(1, COALESCE(p.deadline, CURRENT_DATE) - p.start_date + 1)) 
+            * p.quoted_bid_value 
+            * (prp.allocation_percentage / pta.total_alloc)
+        ) as fb_rev
+    FROM project_resource_plans prp
+    JOIN projects p ON prp.project_id = p.id
+    JOIN BaseEmployees e ON prp.employee_id = e.id
+    JOIN ProjectTotalAllocations pta ON p.id = pta.project_id
+    WHERE prp.organization_id = $1 AND p.billing_type = 'Fixed Bid'
+    GROUP BY prp.employee_id
+)
+SELECT 
+    b.*,
+    COALESCE(ep.total_cost, 0) as expected_cost,
+    COALESCE(tm.tm_rev, 0) + COALESCE(fb.fb_rev, 0) as total_revenue
+FROM BaseEmployees b
+LEFT JOIN EmpPayroll ep ON b.id = ep.id
+LEFT JOIN EmpRevenueTM tm ON b.id = tm.employee_id
+LEFT JOIN EmpRevenueFB fb ON b.id = fb.employee_id
+        `;
 
-            const logsData = await db.query(`
-                SELECT t.hours_worked, p.billing_type, p.quoted_bid_value
-                FROM timesheet_logs t
-                JOIN projects p ON t.project_id = p.id
-                WHERE t.employee_id = $1 AND t.date >= $2 AND t.date <= $3 AND t.approval_id IS NOT NULL
-                AND p.billing_type != 'Fixed Bid' AND t.organization_id = $4
-            `, [empId, tStart, tEnd, req.user.organizationId]);
-
-            let totalRevenue = 0;
-            // Native T&M revenue loop
-            logsData.rows.forEach(log => {
-                totalRevenue += Number(log.hours_worked) * (Number(emp.usd_hourly_rate) || 0) * 83.15;
-            });
-
-            // Native Fixed Bid revenue query and scaling
-            const plansForStatus = await db.query(`
-                SELECT prp.*, p.billing_type, p.quoted_bid_value, p.start_date as proj_start, p.deadline as proj_deadline, p.status as project_status
-                FROM project_resource_plans prp
-                JOIN projects p ON prp.project_id = p.id
-                WHERE prp.employee_id = $1 AND p.billing_type = 'Fixed Bid' AND prp.organization_id = $2
-            `, [empId, req.user.organizationId]);
-
-            plansForStatus.rows.forEach(plan => {
-                totalRevenue += calculateLinearRevenue(
-                    plan.quoted_bid_value,
-                    plan.proj_start,
-                    plan.proj_deadline,
-                    tStart,
-                    tEnd,
-                    emp.joining_date,
-                    plan.allocation_percentage,
-                    emp.name
-                );
-            });
-
-            const expectedCost = calculateStaffCost(
-                monthlySalary,
-                tStart,
-                tEnd,
-                emp.joining_date,
-                emp.name
-            );
+        const dataRes = await db.query(employeeAggQuery, [...queryParams, limit, offset, tStart, tEnd]);
+        
+        const enhancedEmployees = dataRes.rows.map(emp => {
+            const expectedCost = Number(emp.expected_cost);
+            const totalRevenue = Number(emp.total_revenue);
 
             let asset_status = 'LIABILITY';
             let status_color = 'red';
@@ -408,9 +413,6 @@ router.get('/', async (req, res) => {
             if (totalRevenue > expectedCost) {
                 asset_status = 'ASSET';
                 status_color = 'green';
-            } else {
-                asset_status = 'LIABILITY';
-                status_color = 'red';
             }
 
             return {
@@ -418,7 +420,7 @@ router.get('/', async (req, res) => {
                 asset_status,
                 status_color
             };
-        }));
+        });
 
         res.json({
             data: enhancedEmployees,

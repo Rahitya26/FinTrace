@@ -235,6 +235,7 @@ const Auth = () => {
                             <Field label="Set Password" icon={<Lock size={16} />}>
                                 <input
                                     type="password"
+                                    required
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     className="auth-input pl-10"

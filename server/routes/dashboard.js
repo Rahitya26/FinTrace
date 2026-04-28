@@ -1,231 +1,225 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { calculateProjectFinancials } = require('../utils/projectCalculation');
+
 const { getActiveMonthsForEmployee, toLocalDate, getMonthsInPeriod, getValidMonthsForEmployee, calculateStaffCost } = require('../utils/financialUtils');
 
 // GET /api/dashboard/summary
 router.get('/summary', async (req, res) => {
   const { startDate, endDate } = req.query;
-
-  // Build WHERE clauses
-  let projectsWhere = 'WHERE organization_id = $1';
-  let expensesWhere = 'WHERE organization_id = $1';
-  const queryParams = [req.user.organizationId];
-
-  if (startDate && endDate) {
-    const start = `${startDate}T00:00:00`;
-    const end = `${endDate}T23:59:59`;
-    projectsWhere += ' AND start_date <= $3 AND (deadline >= $2 OR deadline IS NULL)';
-    expensesWhere += ' AND date >= $2 AND date <= $3';
-    queryParams.push(start, end);
+  const orgId = req.user.organizationId;
+  
+  // Explicitly compute the effective start date based on frontend filters, heavily clamped to 2026-01-01
+  const MIN_START_DATE = '2026-01-01';
+  let globalStartStr = startDate || MIN_START_DATE;
+  if (new Date(globalStartStr) < new Date(MIN_START_DATE)) {
+      globalStartStr = MIN_START_DATE;
   }
+  const globalEndStr = endDate || null;
 
   try {
-    // Global sanitization layer: pg driver injects incorrect timezone logic natively!
-    const sliceDate = (val) => val instanceof Date ? val.toISOString().substring(0, 10) : val;
-    
-    // 1. Fetch all applicable projects
-    const projectsQuery = `SELECT * FROM projects ${projectsWhere}`;
-    const projectsResult = await db.query(projectsQuery, queryParams);
-    const projects = projectsResult.rows.map(p => {
-        p.start_date = sliceDate(p.start_date);
-        p.deadline = sliceDate(p.deadline);
-        return p;
-    });
+    const globalParams = [orgId, globalStartStr, globalEndStr];
 
+    // 1. Total Company Expenses
+    const expensesRes = await db.query(
+      `SELECT SUM(amount) as total_expenses FROM company_expenses 
+       WHERE organization_id = $1 
+         AND ($2::date IS NULL OR date >= $2::date) 
+         AND ($3::date IS NULL OR date <= $3::date)`,
+      globalParams
+    );
+    const totalCompanyExpenses = Number(expensesRes.rows[0]?.total_expenses) || 0;
 
-    // 3. Fetch all resource plans for these employees
-    const plansQuery = `
-        SELECT prp.*, e.monthly_salary, e.hourly_rate, e.name, e.role, e.joining_date 
-        FROM project_resource_plans prp
-        JOIN employees e ON prp.employee_id = e.id
-        WHERE prp.organization_id = $1
+    // 2. Global Payroll Cost (Bench Baseline)
+    const payrollRes = await db.query(`
+        SELECT SUM(
+            (monthly_salary / 30.0) * 
+            GREATEST(0, (LEAST(COALESCE($3::date, CURRENT_DATE), CURRENT_DATE) - GREATEST(COALESCE($2::date, '2026-01-01'::date), COALESCE(joining_date, '1970-01-01'::date))) + 1)
+        ) as total_payroll
+        FROM employees
+        WHERE organization_id = $1
+    `, globalParams);
+    const totalPayrollCost = Number(payrollRes.rows[0]?.total_payroll) || 0;
+
+    // 3. Project Aggregation (Process Breakdown & Allocated Burns)
+    const projectAggQuery = `
+WITH ProjectBase AS (
+    SELECT id as project_id, COALESCE(billing_type, type::text, 'T&M') as process_type, quoted_bid_value, start_date, deadline 
+    FROM projects 
+    WHERE organization_id = $1
+      AND ($2::date IS NULL OR (deadline >= $2::date OR deadline IS NULL))
+      AND ($3::date IS NULL OR start_date <= $3::date)
+),
+ProjectDays AS (
+    SELECT 
+        pb.project_id,
+        GREATEST(0, (LEAST(COALESCE(pb.deadline, CURRENT_DATE), COALESCE($3::date, CURRENT_DATE)) - GREATEST(pb.start_date, COALESCE($2::date, '2026-01-01'::date))) + 1) as active_days,
+        GREATEST(1, COALESCE(pb.deadline, CURRENT_DATE) - pb.start_date + 1) as total_project_days
+    FROM ProjectBase pb
+),
+StaffCosts AS (
+    SELECT 
+        prp.project_id,
+        SUM(
+            (e.monthly_salary / 30.0) * 
+            GREATEST(0, (LEAST(COALESCE(prp.end_date, CURRENT_DATE), COALESCE($3::date, CURRENT_DATE)) - GREATEST(prp.start_date, COALESCE($2::date, '2026-01-01'::date), COALESCE(e.joining_date, '1970-01-01'::date))) + 1) * 
+            (prp.allocation_percentage / 100.0)
+        ) as allocated_cost
+    FROM project_resource_plans prp
+    JOIN employees e ON prp.employee_id = e.id
+    WHERE prp.organization_id = $1
+    GROUP BY prp.project_id
+),
+TM_Revenue AS (
+    SELECT 
+        t.project_id,
+        SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as tm_revenue
+    FROM timesheet_logs t
+    JOIN employees e ON t.employee_id = e.id
+    JOIN timesheet_approvals ta ON t.approval_id = ta.id
+    LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
+    WHERE t.organization_id = $1 
+      AND ($2::date IS NULL OR t.date >= $2::date)
+      AND ($3::date IS NULL OR t.date <= $3::date)
+    GROUP BY t.project_id
+),
+ProjectFinancials AS (
+    SELECT 
+        pb.project_id,
+        pb.process_type,
+        COALESCE(sc.allocated_cost, 0) as project_cost,
+        COALESCE(
+            CASE 
+                WHEN pb.process_type = 'Fixed Bid' THEN 
+                    (pd.active_days::NUMERIC / pd.total_project_days) * pb.quoted_bid_value
+                ELSE 
+                    tm.tm_revenue
+            END, 
+            0
+        ) as project_revenue
+    FROM ProjectBase pb
+    LEFT JOIN ProjectDays pd ON pb.project_id = pd.project_id
+    LEFT JOIN StaffCosts sc ON pb.project_id = sc.project_id
+    LEFT JOIN TM_Revenue tm ON pb.project_id = tm.project_id
+)
+SELECT 
+    process_type as type,
+    COUNT(*) as count,
+    SUM(project_revenue) as rev,
+    SUM(project_cost) as cost
+FROM ProjectFinancials
+GROUP BY process_type;
     `;
-    const plansResult = await db.query(plansQuery, [req.user.organizationId]);
-    const allPlans = plansResult.rows.map(p => {
-        p.joining_date = sliceDate(p.joining_date);
-        p.start_date = sliceDate(p.start_date);
-        p.end_date = sliceDate(p.end_date);
-        return p;
-    });
-
-    // 4. Fetch Timesheet Logs (Approved and Unapproved)
-    let logsWhere = 'WHERE t.organization_id = $1';
-    const logsParams = [req.user.organizationId];
-    if (startDate && endDate) {
-      logsWhere += ' AND t.date >= $2 AND t.date <= $3';
-      logsParams.push(startDate, endDate);
-    }
-
-    const unapprovedLogsQuery = `
-        SELECT t.project_id, t.employee_id, t.hours_worked, e.usd_hourly_rate, e.hourly_rate as inr_hourly_rate
-        FROM timesheet_logs t
-        JOIN employees e ON t.employee_id = e.id
-        ${logsWhere} AND t.approval_id IS NULL
-      `;
-    const unapprovedLogsResult = await db.query(unapprovedLogsQuery, logsParams);
-    const unapprovedLogs = unapprovedLogsResult.rows;
-
-    // IMPORTANT: Aggregated approved logs for calculateProjectFinancials
-    const approvedLogsQuery = `
-    SELECT
-    t.project_id,
-      t.employee_id,
-      p.billing_type,
-      SUM(t.hours_worked) as total_hours,
-      SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as total_inr_revenue
-        FROM timesheet_logs t
-        JOIN employees e ON t.employee_id = e.id
-        JOIN timesheet_approvals ta ON t.approval_id = ta.id
-        JOIN projects p ON t.project_id = p.id
-        LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
-        ${logsWhere}
-        GROUP BY t.project_id, t.employee_id, p.billing_type
-      `;
-    const approvedLogsResult = await db.query(approvedLogsQuery, logsParams);
-    const approvedLogs = approvedLogsResult.rows;
-
-    const historicalTotalQuery = `
-        SELECT t.project_id, t.employee_id, SUM(t.hours_worked) as total_hours
-        FROM timesheet_logs t
-        WHERE t.organization_id = $1
-        GROUP BY t.project_id, t.employee_id
-      `;
-    const historyResult = await db.query(historicalTotalQuery, [req.user.organizationId]);
-    const historyLogs = historyResult.rows;
-
-    // 5. Aggregate Financials
+    const projectAggRes = await db.query(projectAggQuery, globalParams);
+    
     let totalRevenue = 0;
-    let totalProjectCosts = 0;
+    let totalAllocatedCosts = 0;
     const processTypeBreakdownMap = {
       'T&M': { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 },
       'Fixed Bid': { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 },
       'Fixed Value': { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 }
     };
 
-    // 2. Fetch all employees to initialize the map
-    const allActiveEmployees = await db.query("SELECT id, name, role, joining_date, monthly_salary FROM employees WHERE organization_id = $1", [req.user.organizationId]);
-
-    // User requested explicit YTD floor bound
-    const MIN_START_DATE = new Date('2026-01-01T00:00:00Z');
-    
-    // Explicitly compute the effective start date based on frontend filters, heavily clamped to 2026-01-01
-    let globalStartStr = startDate || '2026-01-01';
-    
-    // Safety check: ensure string never goes before 2026
-    if (new Date(globalStartStr) < MIN_START_DATE) {
-        globalStartStr = '2026-01-01';
-    }
-
-    // Initialize Employee Map with FULL Period Salary (Company View)
-    const employeeCostMap = {};
-    allActiveEmployees.rows.forEach(emp => {
-        // Enforce Math.max boundary on joining_date to guarantee no December leaks
-        let safeJoiningDate = emp.joining_date;
-        if (safeJoiningDate) {
-            // Fix PG UTC bleeding (e.g. 18:30Z turning into next day in IST) by strictly using the literal ISO prefix.
-            if (safeJoiningDate instanceof Date) {
-                safeJoiningDate = safeJoiningDate.toISOString().substring(0, 10);
-            }
-            if (new Date(safeJoiningDate) < MIN_START_DATE) {
-                safeJoiningDate = '2026-01-01';
-            }
+    projectAggRes.rows.forEach(row => {
+        const type = row.type || 'T&M';
+        const rev = Number(row.rev) || 0;
+        const cost = Number(row.cost) || 0;
+        
+        totalRevenue += rev;
+        totalAllocatedCosts += cost;
+        
+        if (!processTypeBreakdownMap[type]) {
+            processTypeBreakdownMap[type] = { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 };
         }
-
-        const periodSalary = calculateStaffCost(
-            emp.monthly_salary,
-            globalStartStr,
-            endDate || null,
-            globalStartStr, // Intersection Filter Start
-            endDate || null,   // Intersection Filter End
-            safeJoiningDate,
-            emp.name
-        );
-        employeeCostMap[emp.id] = {
-            id: emp.id,
-            name: emp.name,
-            role: emp.role,
-            totalCost: periodSalary, // Full period salary paid by company
-            revenueGenerated: 0,
-            byType: {},
-            monthlySalary: Math.round(Number(emp.monthly_salary) || 0)
-        };
-    });
-
-    // Process Projects to Aggregate Company View
-    projects.forEach(project => {
-      const calculated = calculateProjectFinancials(project, allPlans, unapprovedLogs, approvedLogs, historyLogs, startDate, endDate);
-
-      const rev = Number(calculated.revenue_earned) || 0;
-      const cost = Number(calculated.employee_costs) || 0;
-
-      totalRevenue += rev;
-      totalProjectCosts += cost;
-
-      const type = project.billing_type || project.type || 'T&M';
-      if (!processTypeBreakdownMap[type]) {
-        processTypeBreakdownMap[type] = { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 };
-      }
-      processTypeBreakdownMap[type].count += 1;
-      processTypeBreakdownMap[type].rev += rev;
-      processTypeBreakdownMap[type].cost += cost;
-      processTypeBreakdownMap[type].projectedRev += (Number(calculated.projectedRevenue) || 0);
-
-      // Attribute Revenue to Employees
-      if (calculated.debug_info?.plans) {
-        calculated.debug_info.plans.forEach(plan => {
-          if (employeeCostMap[plan.employee_id]) {
-            employeeCostMap[plan.employee_id].revenueGenerated += plan.totalPlanRevenue || 0;
-            
-            if (!employeeCostMap[plan.employee_id].byType[type]) {
-                employeeCostMap[plan.employee_id].byType[type] = 0;
-            }
-            // Optional: track project-specific allocation cost if UI needs it
-          }
-        });
-      }
-    });
-
-    // Final calculations
-    Object.keys(processTypeBreakdownMap).forEach(type => {
-      const t = processTypeBreakdownMap[type];
-      t.margin = t.rev - t.cost;
+        processTypeBreakdownMap[type].count += Number(row.count);
+        processTypeBreakdownMap[type].rev += rev;
+        processTypeBreakdownMap[type].cost += cost;
+        processTypeBreakdownMap[type].margin = rev - cost;
     });
 
     const processTypeBreakdown = Object.keys(processTypeBreakdownMap).map(type => ({
-      type,
-      ...processTypeBreakdownMap[type]
+        type,
+        ...processTypeBreakdownMap[type]
     }));
 
-    const employeeCostList = Object.values(employeeCostMap)
-        .filter(emp => emp.totalCost > 0 || emp.revenueGenerated > 0)
-        .sort((a, b) => b.totalCost - a.totalCost);
+    const totalBenchCost = totalPayrollCost - totalAllocatedCosts;
 
-    // Total Payroll (Sum of all individual totalCosts)
-    const totalPayrollCost = Object.values(employeeCostMap).reduce((sum, emp) => sum + emp.totalCost, 0);
-    // User dictated: Bench Time strictly equals Total Staff Costs - Total Project Burn
-    const totalBenchCost = totalPayrollCost - totalProjectCosts;
+    // 4. Employee Specific Leaderboard
+    const employeeAggQuery = `
+WITH BaseEmployees AS (
+    SELECT id, name, role, monthly_salary, joining_date 
+    FROM employees 
+    WHERE organization_id = $1
+),
+EmpPayroll AS (
+    SELECT id, 
+           (monthly_salary / 30.0) * GREATEST(0, (LEAST(COALESCE($3::date, CURRENT_DATE), CURRENT_DATE) - GREATEST(COALESCE($2::date, '2026-01-01'::date), COALESCE(joining_date, '1970-01-01'::date))) + 1) as total_cost
+    FROM BaseEmployees
+),
+EmpRevenueTM AS (
+    SELECT t.employee_id, SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as tm_rev
+    FROM timesheet_logs t
+    JOIN employees e ON t.employee_id = e.id
+    JOIN timesheet_approvals ta ON t.approval_id = ta.id
+    LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
+    JOIN projects p ON t.project_id = p.id
+    WHERE t.organization_id = $1 
+      AND p.billing_type != 'Fixed Bid'
+      AND ($2::date IS NULL OR t.date >= $2::date)
+      AND ($3::date IS NULL OR t.date <= $3::date)
+    GROUP BY t.employee_id
+),
+EmpRevenueFB AS (
+    SELECT 
+        prp.employee_id,
+        SUM(
+            ((GREATEST(0, (LEAST(COALESCE(p.deadline, CURRENT_DATE), COALESCE($3::date, CURRENT_DATE)) - GREATEST(p.start_date, COALESCE($2::date, '2026-01-01'::date), COALESCE(e.joining_date, '1970-01-01'::date))) + 1)::NUMERIC) / GREATEST(1, COALESCE(p.deadline, CURRENT_DATE) - p.start_date + 1)) 
+            * p.quoted_bid_value 
+            * (prp.allocation_percentage / 100.0)
+        ) as fb_rev
+    FROM project_resource_plans prp
+    JOIN projects p ON prp.project_id = p.id
+    JOIN employees e ON prp.employee_id = e.id
+    WHERE prp.organization_id = $1 AND p.billing_type = 'Fixed Bid'
+    GROUP BY prp.employee_id
+)
+SELECT 
+    b.id, b.name, b.role, b.monthly_salary,
+    COALESCE(ep.total_cost, 0) as "totalCost",
+    COALESCE(tm.tm_rev, 0) + COALESCE(fb.fb_rev, 0) as "revenueGenerated"
+FROM BaseEmployees b
+LEFT JOIN EmpPayroll ep ON b.id = ep.id
+LEFT JOIN EmpRevenueTM tm ON b.id = tm.employee_id
+LEFT JOIN EmpRevenueFB fb ON b.id = fb.employee_id
+WHERE COALESCE(ep.total_cost, 0) > 0 OR (COALESCE(tm.tm_rev, 0) + COALESCE(fb.fb_rev, 0)) > 0
+ORDER BY "totalCost" DESC;
+    `;
 
-    // 8. Company Expenses
-    const expensesResult = await db.query(`SELECT SUM(amount) as total_expenses FROM company_expenses ${expensesWhere} `, queryParams);
-    const totalExpensesValue = Number(expensesResult.rows[0]?.total_expenses) || 0;
+    const empRes = await db.query(employeeAggQuery, globalParams);
+    const employeeCostList = empRes.rows.map(r => ({
+        id: r.id,
+        name: r.name,
+        role: r.role,
+        monthlySalary: Number(r.monthly_salary),
+        totalCost: Number(r.totalCost),
+        revenueGenerated: Number(r.revenueGenerated),
+        byType: {}
+    }));
 
     res.json({
-      startDate: startDate || null,
-      endDate: endDate || null,
+      startDate: globalStartStr,
+      endDate: globalEndStr,
       totalRevenue: Math.round(totalRevenue),
-      totalProjectCosts: Math.round(totalPayrollCost), // Total Salary paid for period
-      totalAllocatedCosts: Math.round(totalProjectCosts), // Sum of project pro-rata burns
+      totalProjectCosts: Math.round(totalPayrollCost), 
+      totalAllocatedCosts: Math.round(totalAllocatedCosts),
       totalBenchCost: Math.round(totalBenchCost),
-      totalCompanyExpenses: Math.round(totalExpensesValue),
+      totalCompanyExpenses: Math.round(totalCompanyExpenses),
       processTypeBreakdown,
       employeeCostList
     });
 
-
   } catch (err) {
-    console.error(err);
+    console.error("Dashboard SQL Refactor Error:", err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { calculateProjectFinancials } = require('../utils/projectCalculation');
 
 // GET /api/projects - List all projects with client details and calculated costs
 router.get('/', async (req, res) => {
@@ -70,100 +69,82 @@ router.get('/', async (req, res) => {
         const totalItems = parseInt(countResult.rows[0].count);
         const totalPages = Math.ceil(totalItems / limit);
 
-        const sliceDate = (val) => val instanceof Date ? val.toISOString().substring(0, 10) : val;
-
-        // 3. Fetch Paginated Projects
+// 2. Main Query with Financial CTEs
         const projectsQuery = `
-            SELECT p.*, c.name as client_name 
-            FROM projects p 
-            JOIN clients c ON p.client_id = c.id 
-            ${whereString}
-            ORDER BY 
-                CASE 
-                    WHEN p.status = 'Active' THEN 0
-                    WHEN p.status = 'Pipeline' THEN 1
-                    WHEN p.status = 'On Hold' THEN 2
-                    WHEN p.status = 'Completed' THEN 3
-                    ELSE 4
-                END ASC,
-                p.created_at DESC
-            LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+WITH ProjectBase AS (
+    SELECT p.*, c.name as client_name 
+    FROM projects p 
+    JOIN clients c ON p.client_id = c.id 
+    ${whereString}
+),
+ProjectDays AS (
+    SELECT 
+        pb.id as project_id,
+        GREATEST(0, (LEAST(COALESCE(pb.deadline, CURRENT_DATE), COALESCE($${paramIndex+2}::date, CURRENT_DATE)) - GREATEST(pb.start_date, COALESCE($${paramIndex+1}::date, '2026-01-01'::date))) + 1) as active_days,
+        GREATEST(1, COALESCE(pb.deadline, CURRENT_DATE) - pb.start_date + 1) as total_project_days
+    FROM ProjectBase pb
+),
+StaffCosts AS (
+    SELECT 
+        prp.project_id,
+        SUM(
+            (e.monthly_salary / 30.0) * 
+            GREATEST(0, (LEAST(COALESCE(prp.end_date, CURRENT_DATE), COALESCE($${paramIndex+2}::date, CURRENT_DATE)) - GREATEST(prp.start_date, COALESCE($${paramIndex+1}::date, '2026-01-01'::date), COALESCE(e.joining_date, '1970-01-01'::date))) + 1) * 
+            (prp.allocation_percentage / 100.0)
+        ) as total_employee_cost
+    FROM project_resource_plans prp
+    JOIN employees e ON prp.employee_id = e.id
+    WHERE prp.organization_id = $1
+    GROUP BY prp.project_id
+),
+TM_Revenue AS (
+    SELECT 
+        t.project_id,
+        SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as tm_revenue
+    FROM timesheet_logs t
+    JOIN employees e ON t.employee_id = e.id
+    JOIN timesheet_approvals ta ON t.approval_id = ta.id
+    LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
+    WHERE t.organization_id = $1 
+      AND ($${paramIndex+1}::date IS NULL OR t.date >= $${paramIndex+1}::date)
+      AND ($${paramIndex+2}::date IS NULL OR t.date <= $${paramIndex+2}::date)
+    GROUP BY t.project_id
+)
+SELECT 
+    pb.*,
+    COALESCE(sc.total_employee_cost, 0)::NUMERIC(15,2) as employee_costs,
+    COALESCE(
+        CASE 
+            WHEN pb.billing_type = 'Fixed Bid' THEN 
+                (pd.active_days::NUMERIC / pd.total_project_days) * pb.quoted_bid_value
+            ELSE 
+                tm.tm_revenue
+        END, 
+        0
+    )::NUMERIC(15,2) as revenue_earned
+FROM ProjectBase pb
+LEFT JOIN ProjectDays pd ON pb.id = pd.project_id
+LEFT JOIN StaffCosts sc ON pb.id = sc.project_id
+LEFT JOIN TM_Revenue tm ON pb.id = tm.project_id
+ORDER BY 
+    CASE 
+        WHEN pb.status = 'Active' THEN 0
+        WHEN pb.status = 'Pipeline' THEN 1
+        WHEN pb.status = 'On Hold' THEN 2
+        WHEN pb.status = 'Completed' THEN 3
+        ELSE 4
+    END ASC,
+    pb.created_at DESC
+LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
         `;
-        const projectsResult = await db.query(projectsQuery, [...queryParams, limit, offset]);
-        const projects = projectsResult.rows.map(p => {
+
+        const projectsResult = await db.query(projectsQuery, [...queryParams, limit, offset, startDate || null, endDate || null]);
+        const projectsWithCosts = projectsResult.rows.map(p => {
             p.start_date = sliceDate(p.start_date);
             p.deadline = sliceDate(p.deadline);
+            p.margin = Math.round(Number(p.revenue_earned) - Number(p.employee_costs));
             return p;
         });
-
-        // 2. Fetch Resource Plans with Employee Details (Scoped to Org)
-        const plansQuery = `
-            SELECT prp.*, e.monthly_salary, e.hourly_rate, e.usd_hourly_rate as default_usd_rate, e.name as employee_name, e.role, e.joining_date 
-            FROM project_resource_plans prp
-            JOIN employees e ON prp.employee_id = e.id
-            WHERE prp.organization_id = $1
-        `;
-        const plansResult = await db.query(plansQuery, [req.user.organizationId]);
-        const plans = plansResult.rows.map(p => ({ 
-            ...p, 
-            name: p.employee_name,
-            joining_date: sliceDate(p.joining_date),
-            start_date: sliceDate(p.start_date),
-            end_date: sliceDate(p.end_date)
-        }));
-
-        // 3. Fetch Unapproved Timesheet Logs for T&M Projections
-        const unapprovedLogsQuery = `
-            SELECT t.project_id, t.employee_id, t.hours_worked, t.date, 
-                   COALESCE(prp.usd_rate, e.usd_hourly_rate) as usd_hourly_rate, 
-                   e.hourly_rate as inr_hourly_rate
-            FROM timesheet_logs t
-            JOIN employees e ON t.employee_id = e.id
-            LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
-            WHERE t.approval_id IS NULL AND t.organization_id = $1
-        `;
-        const unapprovedLogsResult = await db.query(unapprovedLogsQuery, [req.user.organizationId]);
-        const unapprovedLogs = unapprovedLogsResult.rows;
-
-        const approvedLogsQuery = `
-            SELECT 
-                t.project_id, 
-                t.employee_id, 
-                EXTRACT(MONTH FROM t.date) as log_month,
-                EXTRACT(YEAR FROM t.date) as log_year,
-                SUM(t.hours_worked) as total_hours,
-                SUM(t.hours_worked * e.hourly_rate) as total_inr_cost,
-                SUM(t.hours_worked * e.usd_hourly_rate * ta.usd_to_inr_rate) as total_inr_revenue,
-                MIN(t.date) as first_log_date
-            FROM timesheet_logs t
-            JOIN employees e ON t.employee_id = e.id
-            JOIN timesheet_approvals ta ON t.approval_id = ta.id
-            WHERE t.organization_id = $1
-            GROUP BY t.project_id, t.employee_id, EXTRACT(MONTH FROM t.date), EXTRACT(YEAR FROM t.date)
-        `;
-        const approvedLogsResult = await db.query(approvedLogsQuery, [req.user.organizationId]);
-        const approvedLogs = approvedLogsResult.rows;
-
-        // 4. Fetch Historical Logs for total duration calculations
-        const historicalTotalQuery = `
-            SELECT t.project_id, t.employee_id, SUM(t.hours_worked) as total_hours
-            FROM timesheet_logs t
-            WHERE t.organization_id = $1
-            GROUP BY t.project_id, t.employee_id
-        `;
-        const historyResult = await db.query(historicalTotalQuery, [req.user.organizationId]);
-        const historyLogs = historyResult.rows;
-
-        // 5. Merge and Calculate Costs
-        const projectsWithCosts = projects.map(project => calculateProjectFinancials(
-            project, 
-            plans, 
-            unapprovedLogs, 
-            approvedLogs, 
-            historyLogs, 
-            startDate, 
-            endDate
-        ));
 
         res.json({
             data: projectsWithCosts,

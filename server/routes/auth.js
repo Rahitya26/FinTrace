@@ -96,6 +96,10 @@ router.post('/verify-otp', async (req, res) => {
 
         if (orgName) {
             // ── SIGNUP FLOW ──
+            if (!password) {
+                return res.status(400).json({ error: 'Password is required for registration.' });
+            }
+            
             const userCheck = await db.query('SELECT * FROM users WHERE email = $1', [email]);
             if (userCheck.rows.length > 0) {
                 return res.status(400).json({ error: 'User already exists. Please login instead.' });

@@ -4,7 +4,7 @@ const api = axios.create({
     baseURL: 'http://localhost:5001/api',
 });
 
-// Add Interceptor for JWT
+// Add Interceptor for JWT Request
 api.interceptors.request.use((config) => {
     const token = localStorage.getItem('fintrace_token');
     if (token) {
@@ -14,6 +14,19 @@ api.interceptors.request.use((config) => {
 }, (error) => {
     return Promise.reject(error);
 });
+
+// Add Interceptor for JWT Expiration / Unauthorized Response
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response && error.response.status === 401) {
+            localStorage.removeItem('fintrace_token');
+            localStorage.removeItem('fintrace_user');
+            window.location.href = '/auth';
+        }
+        return Promise.reject(error);
+    }
+);
 
 export const requestOtp = (email) => api.post('/auth/request-otp', { email });
 export const verifyOtp = (payload) => api.post('/auth/verify-otp', payload);
