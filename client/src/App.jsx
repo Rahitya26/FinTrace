@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'sonner';
+import { Analytics } from '@vercel/analytics/react';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Clients from './pages/Clients';
@@ -24,6 +25,7 @@ function App() {
       <AuthProvider>
         <Router>
         <Toaster position="top-right" richColors />
+        <Analytics />
         <Routes>
           <Route path="/auth" element={<Auth />} />
           

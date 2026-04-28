@@ -80,7 +80,7 @@ WITH ProjectBase AS (
 ProjectDays AS (
     SELECT 
         pb.id as project_id,
-        GREATEST(0, (LEAST(COALESCE(pb.deadline, CURRENT_DATE), COALESCE($${paramIndex+2}::date, CURRENT_DATE)) - GREATEST(pb.start_date, COALESCE($${paramIndex+1}::date, '2026-01-01'::date))) + 1) as active_days,
+        GREATEST(0, (LEAST(COALESCE(pb.deadline, CURRENT_DATE), COALESCE($${paramIndex+3}::date, CURRENT_DATE)) - GREATEST(pb.start_date, COALESCE($${paramIndex+2}::date, '2026-01-01'::date))) + 1) as active_days,
         GREATEST(1, COALESCE(pb.deadline, CURRENT_DATE) - pb.start_date + 1) as total_project_days
     FROM ProjectBase pb
 ),
@@ -89,7 +89,7 @@ StaffCosts AS (
         prp.project_id,
         SUM(
             (e.monthly_salary / 30.0) * 
-            GREATEST(0, (LEAST(COALESCE(prp.end_date, CURRENT_DATE), COALESCE($${paramIndex+2}::date, CURRENT_DATE)) - GREATEST(prp.start_date, COALESCE($${paramIndex+1}::date, '2026-01-01'::date), COALESCE(e.joining_date, '1970-01-01'::date))) + 1) * 
+            GREATEST(0, (LEAST(COALESCE(prp.end_date, CURRENT_DATE), COALESCE($${paramIndex+3}::date, CURRENT_DATE)) - GREATEST(prp.start_date, COALESCE($${paramIndex+2}::date, '2026-01-01'::date), COALESCE(e.joining_date, '1970-01-01'::date))) + 1) * 
             (prp.allocation_percentage / 100.0)
         ) as total_employee_cost
     FROM project_resource_plans prp
@@ -106,8 +106,8 @@ TM_Revenue AS (
     JOIN timesheet_approvals ta ON t.approval_id = ta.id
     LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
     WHERE t.organization_id = $1 
-      AND ($${paramIndex+1}::date IS NULL OR t.date >= $${paramIndex+1}::date)
-      AND ($${paramIndex+2}::date IS NULL OR t.date <= $${paramIndex+2}::date)
+      AND ($${paramIndex+2}::date IS NULL OR t.date >= $${paramIndex+2}::date)
+      AND ($${paramIndex+3}::date IS NULL OR t.date <= $${paramIndex+3}::date)
     GROUP BY t.project_id
 )
 SELECT 
