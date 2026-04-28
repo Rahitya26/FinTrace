@@ -1,4 +1,4 @@
-const { calculateInclusiveDays, SYSTEM_TODAY } = require('@/utils/dateUtils');
+const { calculateInclusiveDays, SYSTEM_TODAY } = require('./dateUtils');
 
 const getMonthsInPeriod = (startDate, endDate) => {
     if (!startDate || !endDate) return 1;

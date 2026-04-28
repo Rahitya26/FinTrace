@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const db = require('@/db');
+const db = require('../db');
 const { 
   getMonthsInPeriod, 
   getValidMonthsForEmployee, 
@@ -10,8 +10,8 @@ const {
   calculateFixedBidRevenueShare,
   calculateLinearRevenue,
   calculateStaffCost
-} = require('@/utils/financialUtils');
-const { calculateInclusiveDays, SYSTEM_TODAY } = require('@/utils/dateUtils');
+} = require('../utils/financialUtils');
+const { calculateInclusiveDays, SYSTEM_TODAY } = require('../utils/dateUtils');
 
 // GET /api/employees/:id/performance
 router.get('/:id/performance', async (req, res) => {
