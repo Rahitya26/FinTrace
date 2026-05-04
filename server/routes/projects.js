@@ -71,48 +71,140 @@ router.get('/', async (req, res) => {
 
 // 2. Main Query with Financial CTEs
         const projectsQuery = `
-WITH ProjectBase AS (
-    SELECT p.*, c.name as client_name 
+WITH DateBoundaries AS (
+    SELECT 
+        COALESCE($${paramIndex+2}::date, '2026-01-01'::date) as filter_start,
+        COALESCE($${paramIndex+3}::date, CURRENT_DATE)::date as filter_end
+),
+ProjectBase AS (
+    SELECT p.*, c.name as client_name, db.filter_start, db.filter_end
     FROM projects p 
     JOIN clients c ON p.client_id = c.id 
+    CROSS JOIN DateBoundaries db
     ${whereString}
+),
+Months AS (
+    SELECT generate_series(
+        date_trunc('month', (SELECT filter_start FROM DateBoundaries))::date,
+        date_trunc('month', (SELECT filter_end FROM DateBoundaries))::date,
+        '1 month'::interval
+    )::date as month_start
+),
+MonthlyAllocations AS (
+    SELECT 
+        prp.project_id,
+        prp.employee_id,
+        prp.allocation_percentage,
+        e.monthly_salary,
+        m.month_start,
+        (m.month_start + interval '1 month - 1 day')::date as month_end,
+        EXTRACT(DAY FROM (m.month_start + interval '1 month - 1 day'))::int as days_in_this_month,
+        prp.start_date::date as prp_start,
+        prp.end_date::date as prp_end,
+        e.joining_date::date,
+        e.name,
+        e.role
+    FROM project_resource_plans prp
+    JOIN employees e ON prp.employee_id = e.id
+    CROSS JOIN Months m
+    WHERE prp.organization_id = $1
 ),
 ProjectDays AS (
     SELECT 
         pb.id as project_id,
-        GREATEST(0, (LEAST(COALESCE(pb.deadline, CURRENT_DATE), COALESCE($${paramIndex+3}::date, CURRENT_DATE)) - GREATEST(pb.start_date, COALESCE($${paramIndex+2}::date, '2026-01-01'::date))) + 1) as active_days,
-        GREATEST(1, COALESCE(pb.deadline, CURRENT_DATE) - pb.start_date + 1) as total_project_days
+        (LEAST(COALESCE(pb.deadline, pb.filter_end), pb.filter_end)::date - GREATEST(pb.start_date, pb.filter_start)::date) + 1 as active_days,
+        (COALESCE(pb.deadline, pb.filter_end)::date - pb.start_date::date) + 1 as total_project_days
     FROM ProjectBase pb
 ),
-StaffCosts AS (
+EmployeeCosts AS (
     SELECT 
-        prp.project_id,
+        project_id,
+        employee_id,
+        name,
+        role,
+        joining_date,
+        allocation_percentage,
+        monthly_salary,
         SUM(
-            (e.monthly_salary / 30.0) * 
-            GREATEST(0, (LEAST(COALESCE(prp.end_date, CURRENT_DATE), COALESCE($${paramIndex+3}::date, CURRENT_DATE)) - GREATEST(prp.start_date, COALESCE($${paramIndex+2}::date, '2026-01-01'::date), COALESCE(e.joining_date, '1970-01-01'::date))) + 1) * 
-            (prp.allocation_percentage / 100.0)
+            (monthly_salary::NUMERIC / days_in_this_month) * 
+            GREATEST(0, (
+                LEAST(COALESCE(prp_end, (SELECT filter_end FROM DateBoundaries)), month_end, (SELECT filter_end FROM DateBoundaries))::date - 
+                GREATEST(prp_start, month_start, (SELECT filter_start FROM DateBoundaries), COALESCE(joining_date, '1970-01-01'::date))::date
+            ) + 1) * 
+            (allocation_percentage / 100.0)
         ) as total_employee_cost
-    FROM project_resource_plans prp
-    JOIN employees e ON prp.employee_id = e.id
-    WHERE prp.organization_id = $1
-    GROUP BY prp.project_id
+    FROM MonthlyAllocations
+    GROUP BY project_id, employee_id, name, role, joining_date, allocation_percentage, monthly_salary
 ),
-TM_Revenue AS (
+ProjectStaffTotals AS (
+    SELECT project_id, SUM(total_employee_cost) as total_project_staff_cost
+    FROM EmployeeCosts
+    GROUP BY project_id
+),
+EmployeeTMRevenue AS (
     SELECT 
         t.project_id,
-        SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as tm_revenue
+        t.employee_id,
+        SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as total_employee_revenue
     FROM timesheet_logs t
     JOIN employees e ON t.employee_id = e.id
     JOIN timesheet_approvals ta ON t.approval_id = ta.id
     LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
+    CROSS JOIN DateBoundaries db
     WHERE t.organization_id = $1 
-      AND ($${paramIndex+2}::date IS NULL OR t.date >= $${paramIndex+2}::date)
-      AND ($${paramIndex+3}::date IS NULL OR t.date <= $${paramIndex+3}::date)
-    GROUP BY t.project_id
+      AND (db.filter_start IS NULL OR t.date >= db.filter_start)
+      AND (db.filter_end IS NULL OR t.date <= db.filter_end)
+    GROUP BY t.project_id, t.employee_id
+),
+TM_Total AS (
+    SELECT project_id, SUM(total_employee_revenue) as tm_revenue
+    FROM EmployeeTMRevenue
+    GROUP BY project_id
+),
+EmployeeRevenueAttribution AS (
+    SELECT 
+        ec.project_id,
+        ec.employee_id,
+        ec.name,
+        ec.role,
+        ec.joining_date,
+        ec.total_employee_cost,
+        ec.monthly_salary,
+        ec.allocation_percentage,
+        CASE 
+            WHEN pb.billing_type = 'Fixed Bid' THEN 
+                CASE 
+                    WHEN pst.total_project_staff_cost > 0 THEN 
+                        (ec.total_employee_cost / pst.total_project_staff_cost) * 
+                        ((pd.active_days::NUMERIC / pd.total_project_days) * pb.quoted_bid_value)
+                    ELSE 0 
+                END
+            ELSE 
+                COALESCE(er.total_employee_revenue, 0)
+        END as attributed_revenue
+    FROM EmployeeCosts ec
+    JOIN ProjectBase pb ON ec.project_id = pb.id
+    JOIN ProjectDays pd ON ec.project_id = pd.project_id
+    JOIN ProjectStaffTotals pst ON ec.project_id = pst.project_id
+    LEFT JOIN EmployeeTMRevenue er ON ec.project_id = er.project_id AND ec.employee_id = er.employee_id
+),
+ResourceAgg AS (
+    SELECT 
+        project_id,
+        jsonb_agg(jsonb_build_object(
+            'name', name,
+            'role', role,
+            'joining_date', joining_date,
+            'totalPlanCost', total_employee_cost,
+            'totalPlanRevenue', attributed_revenue
+        )) as plans,
+        SUM(monthly_salary * (allocation_percentage / 100.0))::NUMERIC(15,2) as monthly_burn
+    FROM EmployeeRevenueAttribution
+    GROUP BY project_id
 )
 SELECT 
     pb.*,
-    COALESCE(sc.total_employee_cost, 0)::NUMERIC(15,2) as employee_costs,
+    COALESCE(pst.total_project_staff_cost, 0)::NUMERIC(15,2) as employee_costs,
     COALESCE(
         CASE 
             WHEN pb.billing_type = 'Fixed Bid' THEN 
@@ -121,11 +213,17 @@ SELECT
                 tm.tm_revenue
         END, 
         0
-    )::NUMERIC(15,2) as revenue_earned
+    )::NUMERIC(15,2) as revenue_earned,
+    jsonb_build_object(
+        'plans', COALESCE(ra.plans, '[]'::jsonb),
+        'monthlyBurn', COALESCE(ra.monthly_burn, 0),
+        'monthlyRevenue', COALESCE(tm.tm_revenue, 0)
+    ) as debug_info
 FROM ProjectBase pb
 LEFT JOIN ProjectDays pd ON pb.id = pd.project_id
-LEFT JOIN StaffCosts sc ON pb.id = sc.project_id
-LEFT JOIN TM_Revenue tm ON pb.id = tm.project_id
+LEFT JOIN ProjectStaffTotals pst ON pb.id = pst.project_id
+LEFT JOIN TM_Total tm ON pb.id = tm.project_id
+LEFT JOIN ResourceAgg ra ON pb.id = ra.project_id
 ORDER BY 
     CASE 
         WHEN pb.status = 'Active' THEN 0
@@ -133,12 +231,20 @@ ORDER BY
         WHEN pb.status = 'On Hold' THEN 2
         WHEN pb.status = 'Completed' THEN 3
         ELSE 4
-    END ASC,
+    END,
     pb.created_at DESC
 LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
         `;
 
         const projectsResult = await db.query(projectsQuery, [...queryParams, limit, offset, startDate || null, endDate || null]);
+        const sliceDate = (val) => {
+            if (!val) return val;
+            const d = new Date(val);
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
         const projectsWithCosts = projectsResult.rows.map(p => {
             p.start_date = sliceDate(p.start_date);
             p.deadline = sliceDate(p.deadline);

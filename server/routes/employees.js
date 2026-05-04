@@ -19,286 +19,215 @@ router.get('/:id/performance', async (req, res) => {
     const { startDate, endDate } = req.query;
 
     try {
-        // 1. Get Employee Details
-        const empResult = await db.query('SELECT monthly_salary, joining_date FROM employees WHERE id = $1 AND organization_id = $2', [empId, req.user.organizationId]);
-        if (empResult.rows.length === 0) {
-            return res.status(404).json({ error: 'Employee not found' });
-        }
+        const orgId = req.user.organizationId;
+        const baselineStart = startDate || '2026-01-01';
+        const baselineEnd = endDate || new Date().toISOString().substring(0, 10);
 
-        const monthlySalary = Number(empResult.rows[0].monthly_salary) || 0;
-        let joiningDate = empResult.rows[0].joining_date || '2026-02-01';
-        if (joiningDate instanceof Date) {
-            joiningDate = joiningDate.toISOString().substring(0, 10);
-        }
-        const jDate = new Date(joiningDate);
-        const baselineCost = monthlySalary;
-
-        // 2. Determine Granularity (Weekly vs Daily vs Monthly)
-        const months = [];
-        const weeks = [];
-        const days = [];
-        let start, end;
-        let isWeekly = false;
-        let isDaily = false;
-
-        if (startDate && endDate) {
-            // Force local date boundaries to prevent timezone shifting (Date Leak)
-            start = new Date(`${startDate}T00:00:00`);
-            end = new Date(`${endDate}T23:59:59`);
-            const daysInPeriod = calculateInclusiveDays(start, end);
-            
-            if (daysInPeriod <= 7) {
-                isDaily = true;
-                let curr = new Date(start);
-                while (curr <= end) {
-                    days.push({
-                        dateStr: curr.toISOString().split('T')[0],
-                        label: curr.getDate() + ' ' + curr.toLocaleString('default', { month: 'short' }),
-                        revenue: 0,
-                        cost: baselineCost / 30
-                    });
-                    curr.setDate(curr.getDate() + 1);
-                }
-            } else if (daysInPeriod <= 60) {
-                isWeekly = true;
-                let curr = new Date(start);
-                let weekNum = 1;
-                while (curr <= end) {
-                    const weekEnd = new Date(curr);
-                    weekEnd.setDate(curr.getDate() + 6);
-                    weeks.push({
-                        label: `Wk ${weekNum}`,
-                        startDate: new Date(curr),
-                        endDate: new Date(weekEnd > end ? end : weekEnd),
-                        revenue: 0,
-                        cost: baselineCost
-                    });
-                    curr.setDate(curr.getDate() + 7);
-                    weekNum++;
-                }
-            } else {
-                let curr = new Date(start.getFullYear(), start.getMonth(), 1);
-                while (curr <= new Date(end.getFullYear(), end.getMonth(), 1)) {
-                    months.push({
-                        month: curr.toLocaleString('default', { month: 'short' }) + ' ' + curr.getFullYear().toString().slice(-2),
-                        monthNum: curr.getMonth() + 1,
-                        yearNum: curr.getFullYear(),
-                        revenue: 0,
-                        cost: baselineCost
-                    });
-                    curr.setMonth(curr.getMonth() + 1);
-                }
-            }
-        } else {
-            const dateTracker = new Date();
-            for (let i = 5; i >= 0; i--) {
-                const d = new Date(dateTracker.getFullYear(), dateTracker.getMonth() - i, 1);
-                months.push({
-                    month: d.toLocaleString('default', { month: 'short' }) + ' ' + d.getFullYear().toString().slice(-2),
-                    monthNum: d.getMonth() + 1,
-                    yearNum: d.getFullYear(),
-                    revenue: 0,
-                    cost: baselineCost
-                });
-            }
-            start = new Date(dateTracker.getFullYear(), dateTracker.getMonth() - 5, 1);
-            end = new Date();
-        }
-
-        const toLocalDateStr = (date) => {
-            const d = new Date(date);
-            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        };
-
-        const logsQuery = `
-            SELECT 
-                t.date,
-                p.id as project_id,
-                p.billing_type,
-                p.fixed_contract_value,
-                p.quoted_bid_value,
-                p.budgeted_hours,
-                p.status as project_status,
-                p.start_date,
-                p.deadline,
-                t.hours_worked,
-                COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate as tm_rate,
-                prp.allocation_percentage,
-                (SELECT SUM(allocation_percentage) FROM project_resource_plans WHERE project_id = p.id) as total_project_allocation
-            FROM timesheet_logs t
-            JOIN projects p ON t.project_id = p.id
-            JOIN employees e ON t.employee_id = e.id
-            JOIN timesheet_approvals ta ON t.approval_id = ta.id
-            LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
-            WHERE t.employee_id = $1 
-              AND t.date >= $2
-              AND t.date <= $3
-              AND t.approval_id IS NOT NULL
-              AND p.billing_type != 'Fixed Bid'
-              AND t.organization_id = $4
+        const performanceQuery = `
+WITH DateBoundaries AS (
+    SELECT 
+        $2::date as filter_start,
+        $3::date as filter_end
+),
+Months AS (
+    SELECT generate_series(
+        date_trunc('month', (SELECT filter_start FROM DateBoundaries))::date,
+        date_trunc('month', (SELECT filter_end FROM DateBoundaries))::date,
+        '1 month'::interval
+    )::date as month_start
+),
+EmpTotalPayroll AS (
+    SELECT 
+        e.id,
+        e.monthly_salary,
+        e.joining_date,
+        SUM(
+            (e.monthly_salary::NUMERIC / EXTRACT(DAY FROM (m.month_start + interval '1 month - 1 day'))) * 
+            GREATEST(0, (
+                LEAST((SELECT filter_end FROM DateBoundaries), (m.month_start + interval '1 month - 1 day')::date)::date - 
+                GREATEST((SELECT filter_start FROM DateBoundaries), m.month_start, COALESCE(e.joining_date, '1970-01-01'::date))::date
+            ) + 1)
+        ) as total_payroll_cost
+    FROM employees e
+    CROSS JOIN Months m
+    WHERE e.id = $1 AND e.organization_id = $4
+    GROUP BY e.id, e.monthly_salary, e.joining_date
+),
+MonthlyAllocations AS (
+    SELECT 
+        prp.project_id,
+        prp.employee_id,
+        prp.allocation_percentage,
+        e.monthly_salary,
+        m.month_start,
+        (m.month_start + interval '1 month - 1 day')::date as month_end,
+        EXTRACT(DAY FROM (m.month_start + interval '1 month - 1 day'))::int as days_in_this_month,
+        prp.start_date::date as prp_start,
+        prp.end_date::date as prp_end,
+        e.joining_date::date
+    FROM project_resource_plans prp
+    JOIN employees e ON prp.employee_id = e.id
+    CROSS JOIN Months m
+    WHERE prp.employee_id = $1 AND prp.organization_id = $4
+),
+EmployeeCosts AS (
+    SELECT 
+        project_id,
+        employee_id,
+        SUM(
+            (monthly_salary::NUMERIC / days_in_this_month) * 
+            GREATEST(0, (
+                LEAST(COALESCE(prp_end, (SELECT filter_end FROM DateBoundaries)), month_end, (SELECT filter_end FROM DateBoundaries))::date - 
+                GREATEST(prp_start, month_start, (SELECT filter_start FROM DateBoundaries), COALESCE(joining_date, '1970-01-01'::date))::date
+            ) + 1) * 
+            (allocation_percentage / 100.0)
+        ) as total_employee_cost
+    FROM MonthlyAllocations
+    GROUP BY project_id, employee_id
+),
+ProjectStaffTotals AS (
+    SELECT project_id, SUM(
+        (monthly_salary::NUMERIC / days_in_this_month) * 
+        GREATEST(0, (
+            LEAST(COALESCE(prp_end, (SELECT filter_end FROM DateBoundaries)), month_end, (SELECT filter_end FROM DateBoundaries))::date - 
+            GREATEST(prp_start, month_start, (SELECT filter_start FROM DateBoundaries), COALESCE(joining_date, '1970-01-01'::date))::date
+        ) + 1) * 
+        (allocation_percentage / 100.0)
+    ) as total_project_staff_cost
+    FROM (
+        SELECT 
+            prp.project_id,
+            prp.allocation_percentage,
+            e.monthly_salary,
+            m.month_start,
+            (m.month_start + interval '1 month - 1 day')::date as month_end,
+            EXTRACT(DAY FROM (m.month_start + interval '1 month - 1 day'))::int as days_in_this_month,
+            prp.start_date::date as prp_start,
+            prp.end_date::date as prp_end,
+            e.joining_date::date
+        FROM project_resource_plans prp
+        JOIN employees e ON prp.employee_id = e.id
+        CROSS JOIN Months m
+        WHERE prp.project_id IN (SELECT project_id FROM EmployeeCosts) AND prp.organization_id = $4
+    ) sub
+    GROUP BY project_id
+),
+TM_Revenue AS (
+    SELECT 
+        t.project_id,
+        SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as total_employee_revenue
+    FROM timesheet_logs t
+    JOIN employees e ON t.employee_id = e.id
+    JOIN timesheet_approvals ta ON t.approval_id = ta.id
+    LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
+    CROSS JOIN DateBoundaries db
+    WHERE t.employee_id = $1 AND t.organization_id = $4
+      AND (db.filter_start IS NULL OR t.date >= db.filter_start)
+      AND (db.filter_end IS NULL OR t.date <= db.filter_end)
+    GROUP BY t.project_id
+),
+ProjectDays AS (
+    SELECT 
+        p.id as project_id,
+        (LEAST(COALESCE(p.deadline, (SELECT filter_end FROM DateBoundaries)), (SELECT filter_end FROM DateBoundaries))::date - GREATEST(p.start_date, (SELECT filter_start FROM DateBoundaries))::date) + 1 as active_days,
+        (COALESCE(p.deadline, (SELECT filter_end FROM DateBoundaries))::date - p.start_date::date) + 1 as total_project_days
+    FROM projects p
+    WHERE p.id IN (SELECT project_id FROM EmployeeCosts)
+),
+EmployeeRevenueAttribution AS (
+    SELECT 
+        SUM(
+            CASE 
+                WHEN p.billing_type = 'Fixed Bid' THEN 
+                    CASE 
+                        WHEN pst.total_project_staff_cost > 0 THEN 
+                            (ec.total_employee_cost / pst.total_project_staff_cost) * 
+                            ((pd.active_days::NUMERIC / pd.total_project_days) * p.quoted_bid_value)
+                        ELSE 0 
+                    END
+                ELSE 
+                    COALESCE(er.total_employee_revenue, 0)
+            END
+        ) as total_attributed_revenue
+    FROM EmployeeCosts ec
+    JOIN projects p ON ec.project_id = p.id
+    JOIN ProjectDays pd ON ec.project_id = pd.project_id
+    JOIN ProjectStaffTotals pst ON ec.project_id = pst.project_id
+    LEFT JOIN TM_Revenue er ON ec.project_id = er.project_id
+),
+TimelineSegments AS (
+    SELECT 
+        month_start as segment_start,
+        (month_start + interval '1 month - 1 day')::date as segment_end,
+        TO_CHAR(month_start, 'Mon YY') as label
+    FROM Months
+),
+TimelineData AS (
+    SELECT 
+        ts.label,
+        SUM(
+            (e.monthly_salary::NUMERIC / EXTRACT(DAY FROM (m.month_start + interval '1 month - 1 day'))) * 
+            GREATEST(0, (
+                LEAST(ts.segment_end, (m.month_start + interval '1 month - 1 day')::date)::date - 
+                GREATEST(ts.segment_start, m.month_start, COALESCE(e.joining_date, '1970-01-01'::date))::date
+            ) + 1)
+        ) as segment_cost,
+        -- Weighted Revenue per segment
+        COALESCE((
+            SELECT SUM(
+                CASE 
+                    WHEN p.billing_type = 'Fixed Bid' THEN 
+                        CASE 
+                            WHEN pst.total_project_staff_cost > 0 THEN 
+                                -- Cost in THIS segment for THIS project
+                                (
+                                    (SELECT SUM(
+                                        (ma2.monthly_salary::NUMERIC / ma2.days_in_this_month) * 
+                                        GREATEST(0, (
+                                            LEAST(COALESCE(ma2.prp_end, ts.segment_end), ma2.month_end, ts.segment_end)::date - 
+                                            GREATEST(ma2.prp_start, ma2.month_start, ts.segment_start, COALESCE(e.joining_date, '1970-01-01'::date))::date
+                                        ) + 1) * 
+                                        (ma2.allocation_percentage / 100.0)
+                                    ) FROM MonthlyAllocations ma2 WHERE ma2.project_id = p.id) 
+                                / pst.total_project_staff_cost) * 
+                                ((pd.active_days::NUMERIC / pd.total_project_days) * p.quoted_bid_value)
+                            ELSE 0 
+                        END
+                    ELSE 
+                        (SELECT SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) 
+                         FROM timesheet_logs t 
+                         JOIN timesheet_approvals ta ON t.approval_id = ta.id 
+                         LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
+                         WHERE t.employee_id = $1 AND t.project_id = p.id AND t.date >= ts.segment_start AND t.date <= ts.segment_end)
+                END
+            )
+            FROM EmployeeCosts ec
+            JOIN projects p ON ec.project_id = p.id
+            JOIN ProjectDays pd ON ec.project_id = pd.project_id
+            JOIN ProjectStaffTotals pst ON ec.project_id = pst.project_id
+        ), 0) as segment_revenue
+    FROM employees e
+    CROSS JOIN Months m
+    CROSS JOIN TimelineSegments ts
+    WHERE e.id = $1 AND m.month_start = ts.segment_start
+    GROUP BY ts.label, ts.segment_start, ts.segment_end
+)
+SELECT 
+    (SELECT total_payroll_cost FROM EmpTotalPayroll) as period_staff_cost,
+    (SELECT total_attributed_revenue FROM EmployeeRevenueAttribution) as total_revenue,
+    (SELECT jsonb_agg(jsonb_build_object('month', label, 'revenue', ROUND(segment_revenue), 'cost', ROUND(segment_cost), 'profit', ROUND(segment_revenue - segment_cost))) FROM TimelineData) as timeline,
+    (SELECT joining_date FROM employees WHERE id = $1) as joining_date
         `;
-        const logsResult = await db.query(logsQuery, [empId, start, end, req.user.organizationId]);
 
-        const fixedBidQuery = `
-            SELECT prp.*, p.billing_type, p.quoted_bid_value, p.status as project_status, p.start_date, p.deadline
-            FROM project_resource_plans prp
-            JOIN projects p ON prp.project_id = p.id
-            WHERE prp.employee_id = $1 AND p.billing_type = 'Fixed Bid' AND prp.organization_id = $2
-        `;
-        const fixedBidPlansResult = await db.query(fixedBidQuery, [empId, req.user.organizationId]);
-        
-        const sliceDate = (val) => val instanceof Date ? val.toISOString().substring(0, 10) : val;
-        
-        const fixedBidPlans = fixedBidPlansResult.rows.map(p => {
-            p.start_date = sliceDate(p.start_date);
-            p.deadline = sliceDate(p.deadline);
-            return p;
-        });
-
-        // 4. Calculate Total Revenue
-        let totalRevenue = 0;
-        
-        // Add Fixed Bid Revenue natively based on UI duration bounds
-        fixedBidPlans.forEach(plan => {
-            totalRevenue += calculateLinearRevenue(
-                plan.quoted_bid_value,
-                plan.start_date,
-                plan.deadline,
-                start,
-                end,
-                joiningDate,
-                plan.allocation_percentage,
-                empResult.rows[0].name
-            );
-        });
-
-        // Add T&M Revenue natively from logged timesheets
-        logsResult.rows.forEach(log => {
-            totalRevenue += Number(log.hours_worked) * (Number(log.tm_rate) || 0);
-        });
-
-        const timelineData = isDaily ? days : (isWeekly ? weeks : months);
-
-        const timeline = timelineData.map(item => {
-            let revenue = 0;
-            let logsForItem = [];
-            
-            if (isDaily) {
-                logsForItem = logsResult.rows.filter(log => toLocalDateStr(log.date) === item.dateStr);
-            } else if (isWeekly) {
-                logsForItem = logsResult.rows.filter(log => {
-                    const d = new Date(log.date);
-                    return d >= item.startDate && d <= item.endDate;
-                });
-            } else {
-                logsForItem = logsResult.rows.filter(log => {
-                    const d = new Date(log.date);
-                    return (d.getMonth() + 1) === item.monthNum && d.getFullYear() === item.yearNum;
-                });
-            }
-
-            let itemHours = logsForItem.reduce((sum, l) => sum + (Number(l.hours_worked) || 0), 0);
-
-            // Timeline segment costs: use pro-rata only for the VIZ, but the TOTAL will match the dashboard.
-            // However, user said: "In each timeline point ... if no hours are logged ... ensure net contribution doesn't go negative".
-            let periodMultiplier = 1.0;
-            if (isDaily) periodMultiplier = 1/30;
-            else if (isWeekly) periodMultiplier = 7/30;
-
-            // Graph Matrix: Calculate Fixed Bid Linear mapping specific to THIS isolated timeline bound
-            let linearBoundStart, linearBoundEnd;
-            if (isDaily) {
-                linearBoundStart = new Date(`${item.dateStr}T00:00:00`);
-                linearBoundEnd = new Date(`${item.dateStr}T23:59:59`);
-            } else if (isWeekly) {
-                linearBoundStart = item.startDate;
-                linearBoundEnd = item.endDate;
-            } else {
-                linearBoundStart = new Date(item.yearNum, item.monthNum - 1, 1);
-                linearBoundEnd = new Date(item.yearNum, item.monthNum, 0, 23, 59, 59);
-            }
-
-            fixedBidPlans.forEach(plan => {
-                revenue += calculateLinearRevenue(
-                    plan.quoted_bid_value,
-                    plan.start_date,
-                    plan.deadline,
-                    linearBoundStart,
-                    linearBoundEnd,
-                    joiningDate,
-                    plan.allocation_percentage,
-                    empResult.rows[0].name
-                );
-                
-                // Ghost injection for logic parsing
-                if (revenue > 0) itemHours += 1;
-            });
-
-            // T&M Log processing into graph node
-            logsForItem.forEach(log => {
-                revenue += Number(log.hours_worked) * (Number(log.tm_rate) || 0);
-            });
-
-            // 3. Cost (Single segment cost) - Standardized Pro-rata
-            const cost = calculateStaffCost(
-                monthlySalary,
-                linearBoundStart,
-                linearBoundEnd,
-                linearBoundStart, // Use local segment bounds as filter
-                linearBoundEnd,
-                joiningDate,
-                empResult.rows[0].name
-            );
-
-            let segmentProfit = 0;
-            if (itemHours > 0) {
-                segmentProfit = revenue - cost;
-            } else {
-                segmentProfit = 0;
-            }
-
-            return {
-                month: isDaily ? item.label : (isWeekly ? item.label : item.month),
-                revenue: Math.round(revenue),
-                cost: Math.round(cost),
-                profit: Math.round(segmentProfit)
-            };
-        });
-
-        // Calculate Global Staff Cost using UI Date Filter (30-day Proration) clamped to joining_date
-        const periodStaffCost = calculateStaffCost(
-            monthlySalary,
-            start,
-            end,
-            start, // Use global filter bounds
-            end,
-            joiningDate,
-            empResult.rows[0].name
-        );
-        
-        let fbRevenueMatch = 0;
-        fixedBidPlans.forEach(plan => {
-            fbRevenueMatch += calculateLinearRevenue(
-                plan.quoted_bid_value,
-                plan.start_date,
-                plan.deadline,
-                start,
-                end,
-                joiningDate,
-                plan.allocation_percentage,
-                empResult.rows[0].name
-            );
-        });
-
-        // The exact target for Profit Contribution must ONLY use Project FB Share bounds
-        const totalProfitContribution = fbRevenueMatch - periodStaffCost;
+        const result = await db.query(performanceQuery, [empId, baselineStart, baselineEnd, orgId]);
+        const row = result.rows[0];
 
         res.json({
-            timeline,
-            totalProfitContribution: Math.round(totalProfitContribution),
-            periodStaffCost: Math.round(periodStaffCost),
+            timeline: row.timeline || [],
+            totalProfitContribution: Math.round((Number(row.total_revenue) || 0) - (Number(row.period_staff_cost) || 0)),
+            periodStaffCost: Math.round(Number(row.period_staff_cost) || 0),
             currentBusinessHours: 160,
-            joiningDate: joiningDate
+            joiningDate: row.joining_date
         });
 
     } catch (err) {
@@ -345,60 +274,130 @@ router.get('/', async (req, res) => {
         }
 
         const employeeAggQuery = `
-WITH BaseEmployees AS (
+WITH DateBoundaries AS (
+    SELECT 
+        COALESCE($${queryParams.length + 3}::date, '2026-01-01'::date) as filter_start,
+        COALESCE($${queryParams.length + 4}::date, CURRENT_DATE)::date as filter_end
+),
+BaseEmployees AS (
     SELECT e.* 
     FROM employees e 
     ${whereClause} 
     ORDER BY e.name ASC 
     LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}
 ),
-EmpPayroll AS (
-    SELECT id, 
-           (monthly_salary / 30.0) * GREATEST(0, (LEAST(COALESCE($${queryParams.length + 4}::date, CURRENT_DATE), CURRENT_DATE) - GREATEST(COALESCE($${queryParams.length + 3}::date, '2026-01-01'::date), COALESCE(joining_date, '1970-01-01'::date))) + 1) as total_cost
-    FROM BaseEmployees
+Months AS (
+    SELECT generate_series(
+        date_trunc('month', (SELECT filter_start FROM DateBoundaries))::date,
+        date_trunc('month', (SELECT filter_end FROM DateBoundaries))::date,
+        '1 month'::interval
+    )::date as month_start
 ),
-EmpRevenueTM AS (
-    SELECT t.employee_id, SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as tm_rev
-    FROM timesheet_logs t
-    JOIN BaseEmployees e ON t.employee_id = e.id
-    JOIN timesheet_approvals ta ON t.approval_id = ta.id
-    LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
-    JOIN projects p ON t.project_id = p.id
-    WHERE t.organization_id = $1 
-      AND p.billing_type != 'Fixed Bid'
-      AND ($${queryParams.length + 3}::date IS NULL OR t.date >= $${queryParams.length + 3}::date)
-      AND ($${queryParams.length + 4}::date IS NULL OR t.date <= $${queryParams.length + 4}::date)
-    GROUP BY t.employee_id
+EmpTotalPayroll AS (
+    SELECT 
+        be.id,
+        SUM(
+            (be.monthly_salary::NUMERIC / EXTRACT(DAY FROM (m.month_start + interval '1 month - 1 day'))) * 
+            GREATEST(0, (
+                LEAST((SELECT filter_end FROM DateBoundaries), (m.month_start + interval '1 month - 1 day')::date)::date - 
+                GREATEST((SELECT filter_start FROM DateBoundaries), m.month_start, COALESCE(be.joining_date, '1970-01-01'::date))::date
+            ) + 1)
+        ) as total_payroll_cost
+    FROM BaseEmployees be
+    CROSS JOIN Months m
+    GROUP BY be.id
 ),
-ProjectTotalAllocations AS (
-    SELECT project_id, GREATEST(100.0, SUM(allocation_percentage)) as total_alloc
-    FROM project_resource_plans
-    WHERE organization_id = $1
+MonthlyAllocations AS (
+    SELECT 
+        prp.project_id,
+        prp.employee_id,
+        prp.allocation_percentage,
+        e.monthly_salary,
+        m.month_start,
+        (m.month_start + interval '1 month - 1 day')::date as month_end,
+        EXTRACT(DAY FROM (m.month_start + interval '1 month - 1 day'))::int as days_in_this_month,
+        prp.start_date::date as prp_start,
+        prp.end_date::date as prp_end,
+        e.joining_date::date
+    FROM project_resource_plans prp
+    JOIN employees e ON prp.employee_id = e.id
+    CROSS JOIN Months m
+    WHERE prp.organization_id = $1
+),
+EmployeeCosts AS (
+    SELECT 
+        project_id,
+        employee_id,
+        SUM(
+            (monthly_salary::NUMERIC / days_in_this_month) * 
+            GREATEST(0, (
+                LEAST(COALESCE(prp_end, (SELECT filter_end FROM DateBoundaries)), month_end, (SELECT filter_end FROM DateBoundaries))::date - 
+                GREATEST(prp_start, month_start, (SELECT filter_start FROM DateBoundaries), COALESCE(joining_date, '1970-01-01'::date))::date
+            ) + 1) * 
+            (allocation_percentage / 100.0)
+        ) as total_employee_cost
+    FROM MonthlyAllocations
+    GROUP BY project_id, employee_id
+),
+ProjectStaffTotals AS (
+    SELECT project_id, SUM(total_employee_cost) as total_project_staff_cost
+    FROM EmployeeCosts
     GROUP BY project_id
 ),
-EmpRevenueFB AS (
+TM_Revenue AS (
     SELECT 
-        prp.employee_id,
+        t.project_id,
+        t.employee_id,
+        SUM(t.hours_worked * COALESCE(prp.usd_rate, e.usd_hourly_rate) * ta.usd_to_inr_rate) as total_employee_revenue
+    FROM timesheet_logs t
+    JOIN employees e ON t.employee_id = e.id
+    JOIN timesheet_approvals ta ON t.approval_id = ta.id
+    LEFT JOIN project_resource_plans prp ON t.project_id = prp.project_id AND t.employee_id = prp.employee_id
+    CROSS JOIN DateBoundaries db
+    WHERE t.organization_id = $1 
+      AND (db.filter_start IS NULL OR t.date >= db.filter_start)
+      AND (db.filter_end IS NULL OR t.date <= db.filter_end)
+    GROUP BY t.project_id, t.employee_id
+),
+ProjectDays AS (
+    SELECT 
+        p.id as project_id,
+        (LEAST(COALESCE(p.deadline, (SELECT filter_end FROM DateBoundaries)), (SELECT filter_end FROM DateBoundaries))::date - GREATEST(p.start_date, (SELECT filter_start FROM DateBoundaries))::date) + 1 as active_days,
+        (COALESCE(p.deadline, (SELECT filter_end FROM DateBoundaries))::date - p.start_date::date) + 1 as total_project_days
+    FROM projects p
+    CROSS JOIN DateBoundaries db
+    WHERE p.organization_id = $1
+),
+EmployeeRevenueAttribution AS (
+    SELECT 
+        ec.employee_id,
         SUM(
-            ((GREATEST(0, (LEAST(COALESCE(p.deadline, CURRENT_DATE), COALESCE($${queryParams.length + 4}::date, CURRENT_DATE)) - GREATEST(p.start_date, COALESCE($${queryParams.length + 3}::date, '2026-01-01'::date), COALESCE(e.joining_date, '1970-01-01'::date))) + 1)::NUMERIC) / GREATEST(1, COALESCE(p.deadline, CURRENT_DATE) - p.start_date + 1)) 
-            * p.quoted_bid_value 
-            * (prp.allocation_percentage / pta.total_alloc)
-        ) as fb_rev
-    FROM project_resource_plans prp
-    JOIN projects p ON prp.project_id = p.id
-    JOIN BaseEmployees e ON prp.employee_id = e.id
-    JOIN ProjectTotalAllocations pta ON p.id = pta.project_id
-    WHERE prp.organization_id = $1 AND p.billing_type = 'Fixed Bid'
-    GROUP BY prp.employee_id
+            CASE 
+                WHEN p.billing_type = 'Fixed Bid' THEN 
+                    CASE 
+                        WHEN pst.total_project_staff_cost > 0 THEN 
+                            (ec.total_employee_cost / pst.total_project_staff_cost) * 
+                            ((pd.active_days::NUMERIC / pd.total_project_days) * p.quoted_bid_value)
+                        ELSE 0 
+                    END
+                ELSE 
+                    COALESCE(er.total_employee_revenue, 0)
+            END
+        ) as attributed_revenue
+    FROM EmployeeCosts ec
+    JOIN projects p ON ec.project_id = p.id
+    JOIN ProjectDays pd ON ec.project_id = pd.project_id
+    JOIN ProjectStaffTotals pst ON ec.project_id = pst.project_id
+    LEFT JOIN TM_Revenue er ON ec.project_id = er.project_id AND ec.employee_id = er.employee_id
+    GROUP BY ec.employee_id
 )
 SELECT 
-    b.*,
-    COALESCE(ep.total_cost, 0) as expected_cost,
-    COALESCE(tm.tm_rev, 0) + COALESCE(fb.fb_rev, 0) as total_revenue
-FROM BaseEmployees b
-LEFT JOIN EmpPayroll ep ON b.id = ep.id
-LEFT JOIN EmpRevenueTM tm ON b.id = tm.employee_id
-LEFT JOIN EmpRevenueFB fb ON b.id = fb.employee_id
+    be.*,
+    etp.total_payroll_cost as expected_cost,
+    COALESCE(era.attributed_revenue, 0) as total_revenue
+FROM BaseEmployees be
+LEFT JOIN EmpTotalPayroll etp ON be.id = etp.id
+LEFT JOIN EmployeeRevenueAttribution era ON be.id = era.employee_id;
         `;
 
         const dataRes = await db.query(employeeAggQuery, [...queryParams, limit, offset, tStart, tEnd]);
