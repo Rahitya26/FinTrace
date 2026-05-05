@@ -42,7 +42,7 @@ router.get('/', async (req, res) => {
         const totalItems = parseInt(countResult.rows[0].count);
         const totalPages = Math.ceil(totalItems / limit);
 
-        console.log("DEBUG: Executing Clients Financial Query at", new Date().toISOString());
+
         // Financial Aggregation Query
         const dataQuery = `
 WITH ProjectList AS (

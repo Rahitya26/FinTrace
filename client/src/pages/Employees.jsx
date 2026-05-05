@@ -460,8 +460,8 @@ const Employees = () => {
                                             >
                                                 <option value="Fixed Bid">Fixed Bid</option>
                                                 <option value="T&M">T&M</option>
-                                                <option value="Fixed Value">Fixed Value</option>
                                             </select>
+
                                         </div>
                                     </div>
                                     <div>

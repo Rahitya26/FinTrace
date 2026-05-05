@@ -296,6 +296,20 @@ router.post('/', async (req, res) => {
         // 2. Insert Resources if present
         if (resources && Array.isArray(resources) && resources.length > 0) {
             for (const resource of resources) {
+                // Capacity Check
+                const capacityResult = await client.query(
+                    `SELECT COALESCE(SUM(allocation_percentage), 0) as current_allocation 
+                     FROM project_resource_plans 
+                     WHERE employee_id = $1 AND end_date IS NULL AND organization_id = $2`,
+                    [resource.employeeId, req.user.organizationId]
+                );
+                const currentAlloc = parseInt(capacityResult.rows[0].current_allocation);
+                const requestedAlloc = parseInt(resource.allocation || 100);
+
+                if (currentAlloc + requestedAlloc > 100) {
+                    throw new Error(`Employee ${resource.employeeId} would exceed 100% capacity (Currently: ${currentAlloc}%, Requested: ${requestedAlloc}%)`);
+                }
+
                 await client.query(
                     `INSERT INTO project_resource_plans (
                         project_id, employee_id, allocation_percentage, start_date, end_date, usd_rate, organization_id
@@ -303,7 +317,7 @@ router.post('/', async (req, res) => {
                     [
                         newProject.id, 
                         resource.employeeId, 
-                        resource.allocation || 100, 
+                        requestedAlloc, 
                         resource.startDate || newProject.start_date,
                         resource.endDate || null,
                         resource.usdRate || null,
@@ -409,25 +423,26 @@ router.post('/:id/resources', async (req, res) => {
             return res.status(400).json({ error: 'Employee ID and Start Date are required' });
         }
 
-        // Check if employee is already active on this project or has an overlapping historical assignment
-        const existingCheck = await db.query(
-            `SELECT * FROM project_resource_plans 
-             WHERE project_id = $1 
-             AND employee_id = $2 
-             AND (
-                 end_date IS NULL 
-                 OR end_date >= $3
-             )`,
-            [id, employeeId, startDate]
+        // Capacity Check
+        const capacityResult = await db.query(
+            `SELECT COALESCE(SUM(allocation_percentage), 0) as current_allocation 
+             FROM project_resource_plans 
+             WHERE employee_id = $1 AND end_date IS NULL AND organization_id = $2`,
+            [employeeId, req.user.organizationId]
         );
+        const currentAlloc = parseInt(capacityResult.rows[0].current_allocation);
+        const requestedAlloc = parseInt(allocationPercentage || 100);
 
-        if (existingCheck.rows.length > 0) {
-            return res.status(400).json({ error: 'This employee is already active or has an overlapping assignment on this project.' });
+        if (currentAlloc + requestedAlloc > 100) {
+            return res.status(400).json({ 
+                error: `Employee bandwidth exceeded.`,
+                details: `This employee already has ${currentAlloc}% allocation. You can only assign up to ${100 - currentAlloc}% more.`
+            });
         }
 
         const result = await db.query(
             'INSERT INTO project_resource_plans (project_id, employee_id, allocation_percentage, start_date, usd_rate, organization_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-            [id, employeeId, allocationPercentage || 100, startDate, req.body.usdRate || null, req.user.organizationId]
+            [id, employeeId, requestedAlloc, startDate, req.body.usdRate || null, req.user.organizationId]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {

@@ -42,6 +42,7 @@ const Dashboard = () => {
         employeeId: null,
         employeeName: ''
     });
+    const [showBenchBreakdown, setShowBenchBreakdown] = useState(false);
 
     const navigate = useNavigate();
 
@@ -201,17 +202,31 @@ const Dashboard = () => {
                 <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
                     <div className="flex items-center justify-between mb-4">
                         <h3 className="text-sm font-medium text-slate-500 dark:text-slate-400">Net Savings</h3>
-                        <div className="p-2 bg-emerald-100 dark:bg-emerald-900/30 rounded-lg">
-                            <DollarSign className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                        <div className={cn(
+                            "p-2 rounded-lg",
+                            netSavings >= 0 ? "bg-emerald-100 dark:bg-emerald-900/30" : "bg-red-100 dark:bg-red-900/30"
+                        )}>
+                            <DollarSign className={cn(
+                                "w-5 h-5",
+                                netSavings >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
+                            )} />
                         </div>
                     </div>
                     <p className="text-3xl font-bold text-slate-900 dark:text-white">{formatCurrency(netSavings)}</p>
                     <div className="flex items-center mt-2 text-sm">
-                        <TrendingUp className="w-4 h-4 text-emerald-500 mr-1" />
-                        <span className="text-emerald-500 font-medium">{savingsRate.toFixed(1)}%</span>
+                        {netSavings >= 0 ? (
+                            <TrendingUp className="w-4 h-4 text-emerald-500 mr-1" />
+                        ) : (
+                            <TrendingDown className="w-4 h-4 text-red-500 mr-1" />
+                        )}
+                        <span className={cn(
+                            "font-medium",
+                            netSavings >= 0 ? "text-emerald-500" : "text-red-500"
+                        )}>{savingsRate.toFixed(1)}%</span>
                         <span className="text-slate-400 ml-1">of revenue</span>
                     </div>
                 </div>
+
 
                 <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
                     <div className="flex items-center justify-between mb-4">
@@ -293,13 +308,31 @@ const Dashboard = () => {
                                     })}
 
                                     {/* Bench Cost Row */}
-                                    <div className="p-2 rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/20">
+                                    <div 
+                                        onClick={() => setShowBenchBreakdown(!showBenchBreakdown)}
+                                        className="p-2 rounded-lg border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/20 cursor-pointer hover:border-primary/50 transition-all"
+                                    >
                                         <div className="flex items-center justify-between mb-1">
                                             <span className="text-sm font-medium text-slate-500 dark:text-slate-400">Bench / Unallocated Cost</span>
                                             <span className="font-bold text-red-400">-{formatCurrency(stats.totalBenchCost)}</span>
                                         </div>
-                                        <p className="text-[10px] text-slate-400 italic">Salary cost for time not allocated to projects</p>
+                                        <p className="text-[10px] text-slate-400 italic">Salary cost for time not allocated to projects. Click to view breakdown.</p>
                                     </div>
+
+                                    {showBenchBreakdown && (
+                                        <div className="pl-4 space-y-2 animate-in slide-in-from-top-1 duration-200">
+                                            {stats.employeeCostList?.filter(e => e.benchCost > 1).map(emp => (
+
+                                                <div key={emp.id} className="flex justify-between items-center text-xs">
+                                                    <span className="text-slate-500">{emp.name}</span>
+                                                    <span className="text-red-400 font-medium">{formatCurrency(emp.benchCost)}</span>
+                                                </div>
+                                            ))}
+                                            {stats.employeeCostList?.filter(e => e.benchCost > 0).length === 0 && (
+                                                <p className="text-[10px] text-slate-400 text-center py-2">No bench costs for this period.</p>
+                                            )}
+                                        </div>
+                                    )}
 
                                     
                                     {/* Final Reconciliation Footer */}
@@ -321,8 +354,16 @@ const Dashboard = () => {
                                             </div>
                                             <div className="pt-3 mt-3 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between">
                                                 <span className="font-bold text-slate-900 dark:text-white">Final Net Savings</span>
-                                                <span className="font-bold text-lg text-emerald-500">{formatCurrency(sumOfProcessMargins - stats.totalBenchCost - stats.totalCompanyExpenses)}</span>
+                                                <span className={cn(
+                                                    "font-bold text-lg",
+                                                    (sumOfProcessMargins - stats.totalBenchCost - stats.totalCompanyExpenses) >= 0 
+                                                        ? "text-emerald-500" 
+                                                        : "text-red-500"
+                                                )}>
+                                                    {formatCurrency(sumOfProcessMargins - stats.totalBenchCost - stats.totalCompanyExpenses)}
+                                                </span>
                                             </div>
+
 
                                         </div>
                                     </div>
@@ -472,12 +513,27 @@ const Dashboard = () => {
                                                 </tr>
                                             ))}
                                             {/* Bench Cost Row */}
-                                            <tr className="bg-slate-50/50 dark:bg-slate-800/20 italic">
+                                            <tr 
+                                                onClick={() => setShowBenchBreakdown(!showBenchBreakdown)}
+                                                className="bg-slate-50/50 dark:bg-slate-800/20 italic cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors"
+                                            >
                                                 <td className="px-4 py-3 text-slate-500 dark:text-slate-400">Bench / Unallocated Time</td>
-                                                <td className="px-4 py-3 text-slate-400">-</td>
+                                                <td className="px-4 py-3 text-slate-400 text-center">
+                                                    <span className="text-[10px] uppercase font-bold tracking-tighter bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded">
+                                                        {showBenchBreakdown ? 'Hide' : 'View Breakdown'}
+                                                    </span>
+                                                </td>
                                                 <td className="px-4 py-3 text-red-400">{formatCurrency(stats.totalBenchCost || 0)}</td>
                                                 <td className="px-4 py-3 text-red-400">-{formatCurrency(stats.totalBenchCost || 0)}</td>
                                             </tr>
+                                            {showBenchBreakdown && stats.employeeCostList?.filter(e => e.benchCost > 1).map(emp => (
+                                                <tr key={`bench-${emp.id}`} className="bg-slate-50/30 dark:bg-slate-900/10 text-xs border-l-2 border-red-400/30 animate-in slide-in-from-left-1 duration-150">
+                                                    <td className="px-8 py-2 text-slate-500 dark:text-slate-400">{emp.name}</td>
+                                                    <td className="px-4 py-2 text-slate-400">-</td>
+                                                    <td className="px-4 py-2 text-red-400/80">{formatCurrency(emp.benchCost)}</td>
+                                                    <td className="px-4 py-2 text-red-400/80">-{formatCurrency(emp.benchCost)}</td>
+                                                </tr>
+                                            ))}
                                         </tbody>
                                         <tfoot>
                                             <tr className="bg-slate-100/30 dark:bg-slate-800/30 font-bold border-t border-slate-200 dark:border-slate-700">

@@ -210,7 +210,7 @@ TimelineData AS (
     CROSS JOIN Months m
     CROSS JOIN TimelineSegments ts
     WHERE e.id = $1 AND m.month_start = ts.segment_start
-    GROUP BY ts.label, ts.segment_start, ts.segment_end
+    GROUP BY ts.label, ts.segment_start, ts.segment_end, e.monthly_salary, e.joining_date, e.usd_hourly_rate
 )
 SELECT 
     (SELECT total_payroll_cost FROM EmpTotalPayroll) as period_staff_cost,
@@ -390,14 +390,24 @@ EmployeeRevenueAttribution AS (
     JOIN ProjectStaffTotals pst ON ec.project_id = pst.project_id
     LEFT JOIN TM_Revenue er ON ec.project_id = er.project_id AND ec.employee_id = er.employee_id
     GROUP BY ec.employee_id
+),
+CurrentAllocations AS (
+    SELECT 
+        employee_id,
+        SUM(allocation_percentage) as current_alloc
+    FROM project_resource_plans
+    WHERE end_date IS NULL AND organization_id = $1
+    GROUP BY employee_id
 )
 SELECT 
     be.*,
     etp.total_payroll_cost as expected_cost,
-    COALESCE(era.attributed_revenue, 0) as total_revenue
+    COALESCE(era.attributed_revenue, 0) as total_revenue,
+    COALESCE(ca.current_alloc, 0) as current_allocation
 FROM BaseEmployees be
 LEFT JOIN EmpTotalPayroll etp ON be.id = etp.id
-LEFT JOIN EmployeeRevenueAttribution era ON be.id = era.employee_id;
+LEFT JOIN EmployeeRevenueAttribution era ON be.id = era.employee_id
+LEFT JOIN CurrentAllocations ca ON be.id = ca.employee_id;
         `;
 
         const dataRes = await db.query(employeeAggQuery, [...queryParams, limit, offset, tStart, tEnd]);

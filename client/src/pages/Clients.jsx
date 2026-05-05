@@ -144,13 +144,6 @@ const ClientCard = ({ client, isExpanded, onToggle }) => {
                             <Clock className="w-4 h-4" />
                             T&M
                         </button>
-                        <button
-                            onClick={(e) => { e.stopPropagation(); handleNavigation('Fixed Value'); }}
-                            className="flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 dark:hover:bg-purple-900/40 rounded-lg transition-colors border border-transparent hover:border-purple-200"
-                        >
-                            <DollarSign className="w-4 h-4" />
-                            Fixed Value
-                        </button>
                     </div>
                 </div>
             </div>

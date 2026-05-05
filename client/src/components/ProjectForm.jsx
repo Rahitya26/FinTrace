@@ -6,7 +6,7 @@ import { getEmployees } from '../lib/api';
 import { formatCurrency, cn } from '../lib/utils';
 import { calculateInclusiveDays } from '../utils/dateUtils';
 
-const PROCESS_TYPES = ['T&M', 'Fixed Bid', 'Fixed Value'];
+const PROCESS_TYPES = ['T&M', 'Fixed Bid'];
 
 const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) => {
     const [employees, setEmployees] = useState([]);
@@ -373,7 +373,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                 <div>
                                     {(() => {
                                         const isEditMode = !!initialData;
-                                        const isFixedBid = formData.type === 'Fixed Bid' || formData.type === 'Fixed Value';
+                                        const isFixedBid = formData.type === 'Fixed Bid';
                                         return (
                                             <>
                                                 <label htmlFor="revenue" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
@@ -420,7 +420,31 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
 
                         <div className="flex flex-col sm:flex-row gap-4 items-end bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700 w-full mb-6">
                             <div className="w-full sm:w-[40%]">
-                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Add Resource</label>
+                                <div className="flex justify-between items-center mb-2">
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Add Resource</label>
+                                    {newResource.employeeId && (() => {
+                                        const emp = employees.find(e => e.id === Number(newResource.employeeId));
+                                        if (!emp) return null;
+                                        
+                                        // Current allocation from OTHER projects
+                                        const otherProjectsAlloc = Number(emp.current_allocation || 0);
+                                        // Allocation already added in THIS project form
+                                        const currentFormAlloc = resources
+                                            .filter(r => Number(r.employeeId) === emp.id)
+                                            .reduce((sum, r) => sum + Number(r.allocation || 0), 0);
+                                        
+                                        const remaining = 100 - (otherProjectsAlloc + currentFormAlloc);
+                                        
+                                        return (
+                                            <span className={cn(
+                                                "text-[10px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider",
+                                                remaining > 20 ? "bg-emerald-50 text-emerald-600 border-emerald-100" : remaining > 0 ? "bg-amber-50 text-amber-600 border-amber-100" : "bg-red-50 text-red-600 border-red-100"
+                                            )}>
+                                                Available: {remaining}%
+                                            </span>
+                                        );
+                                    })()}
+                                </div>
 
                                 <div className="mb-3">
                                     <div className="flex flex-wrap gap-1.5 pb-2">
@@ -472,11 +496,14 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                             .filter(e => !resources.some(r => Number(r.employeeId) === e.id))
                                             .filter(e => selectedRole === '' || e.role === selectedRole)
                                             .filter(e => e.name.toLowerCase().includes(empSearch.toLowerCase()) || e.role.toLowerCase().includes(empSearch.toLowerCase()))
-                                            .map(e => (
-                                                <option key={e.id} value={e.id}>
-                                                    {e.name} - {e.role} (Billable: ${Number(e.usd_hourly_rate || 0).toFixed(2)}/hr)
-                                                </option>
-                                            ))}
+                                            .map(e => {
+                                                const currentAlloc = Number(e.current_allocation || 0);
+                                                return (
+                                                    <option key={e.id} value={e.id}>
+                                                        {e.name} - {e.role} ({currentAlloc}% Allocated)
+                                                    </option>
+                                                );
+                                            })}
                                     </select>
                                 </div>
                             </div>
@@ -504,7 +531,7 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                                 </label>
                                 <input
                                     type="number"
-                                    min="0"
+                                    min="1"
                                     max="100"
                                     className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                                     value={newResource.allocation}
@@ -515,7 +542,17 @@ const ProjectForm = ({ clients, onSubmit, onCancel, isLoading, initialData }) =>
                             <div className="w-full sm:w-[15%] flex justify-end sm:justify-start">
                                 <button
                                     type="button"
-                                    onClick={addResource}
+                                    onClick={() => {
+                                        const emp = employees.find(e => e.id === Number(newResource.employeeId));
+                                        if (emp) {
+                                            const totalAlloc = Number(emp.current_allocation || 0) + Number(newResource.allocation || 0);
+                                            if (totalAlloc > 100) {
+                                                toast.error(`${emp.name} would exceed 100% capacity (${totalAlloc}%). Please reduce allocation.`);
+                                                return;
+                                            }
+                                        }
+                                        addResource();
+                                    }}
                                     disabled={!newResource.employeeId}
                                     className="w-full sm:w-auto px-4 py-2 bg-slate-900 dark:bg-slate-100 rounded-lg hover:bg-slate-800 dark:hover:bg-white text-white dark:text-slate-900 font-medium disabled:opacity-50 transition-colors whitespace-nowrap"
                                 >

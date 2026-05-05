@@ -10,7 +10,7 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
 
     const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
     const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
-    const [allocation, setAllocation] = useState(project?.type === 'T&M' ? 100 : 100);
+    const [allocation, setAllocation] = useState(100);
     const [usdRate, setUsdRate] = useState('');
     const [error, setError] = useState(null);
 
@@ -26,7 +26,7 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
             setSearchTerm('');
             setIsDropdownOpen(false);
             setStartDate(new Date().toISOString().split('T')[0]);
-            setAllocation(project.type === 'T&M' ? 100 : 100);
+            setAllocation(100);
             setUsdRate('');
             setError(null);
         }
@@ -56,10 +56,20 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
         }
     };
 
+    const selectedEmp = employees.find(e => Number(e.id) === Number(selectedEmployeeId));
+    const currentAlloc = selectedEmp ? Number(selectedEmp.current_allocation || 0) : 0;
+    const remainingCapacity = Math.max(0, 100 - currentAlloc);
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (!selectedEmployeeId || !startDate) {
             setError('Please fill in all required fields');
+            return;
+        }
+
+        const requestedAlloc = Number(allocation);
+        if (requestedAlloc > remainingCapacity) {
+            setError(`Insufficient bandwidth. This employee only has ${remainingCapacity}% capacity remaining.`);
             return;
         }
 
@@ -70,22 +80,20 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
             await api.post(`/projects/${project.id}/resources`, {
                 employeeId: selectedEmployeeId,
                 startDate,
-                allocationPercentage: project.type === 'T&M' ? 100 : allocation,
+                allocationPercentage: requestedAlloc,
                 usdRate: Number(usdRate)
             });
 
             onAddSuccess();
         } catch (err) {
             console.error('Failed to add resource', err);
-            setError(err.response?.data?.error || 'An error occurred while assigning resource');
+            setError(err.response?.data?.details || err.response?.data?.error || 'An error occurred while assigning resource');
         } finally {
             setIsSaving(false);
         }
     };
 
     if (!isOpen || !project) return null;
-
-    const selectedEmp = employees.find(e => e.id === Number(selectedEmployeeId));
 
     const filteredEmployees = employees.filter(emp =>
         emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -104,6 +112,7 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
 
         setSelectedEmployeeId(emp.id);
         setUsdRate(emp.usd_hourly_rate || '');
+        setAllocation(Math.min(100, 100 - Number(emp.current_allocation || 0)));
         setIsDropdownOpen(false);
         setSearchTerm('');
     };
@@ -193,6 +202,7 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
                                             {filteredEmployees.length > 0 ? (
                                                 filteredEmployees.map(emp => {
                                                     const isAssigned = project.debug_info?.plans?.some(p => Number(p.employee_id) === Number(emp.id) && !p.offboarded);
+                                                    const currentAlloc = Number(emp.current_allocation || 0);
                                                     return (
                                                         <li
                                                             key={emp.id}
@@ -212,8 +222,13 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
                                                             <div className="flex flex-col">
                                                                 <div className="flex justify-between items-center">
                                                                     <span className="font-semibold">{emp.name}</span>
-                                                                    <span className="text-[10px] font-mono font-bold bg-blue-50 dark:bg-blue-900/30 px-1.5 py-0.5 rounded text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-800">
-                                                                        Billable: ${Number(emp.usd_hourly_rate || 0).toFixed(2)}/hr
+                                                                    <span className={cn(
+                                                                        "text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border",
+                                                                        currentAlloc >= 100 
+                                                                            ? "bg-red-50 text-red-600 border-red-100 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800"
+                                                                            : "bg-blue-50 text-blue-600 border-blue-100 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800"
+                                                                    )}>
+                                                                        {currentAlloc}% Allocated
                                                                     </span>
                                                                 </div>
                                                                 <span className="text-[11px] opacity-80 whitespace-nowrap">
@@ -264,53 +279,58 @@ const AssignResourceModal = ({ isOpen, onClose, project, onAddSuccess }) => {
                                 />
                             </div>
 
-                            {project.type !== 'T&M' && (
-                                <div className="col-span-2">
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-                                        Allocation %
-                                    </label>
+                            <div className="col-span-2">
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+                                    Allocation %
+                                </label>
+                                <div className="flex items-center gap-3">
                                     <input
                                         type="number"
                                         min="1"
-                                        max="100"
+                                        max={remainingCapacity}
                                         value={allocation}
                                         onChange={(e) => setAllocation(e.target.value)}
-                                        className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                        className={cn(
+                                            "flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-slate-800 text-slate-900 dark:text-white",
+                                            Number(allocation) > remainingCapacity ? "border-red-500 focus:ring-red-500/20" : "border-slate-300 dark:border-slate-600"
+                                        )}
                                         required
                                     />
+                                    {selectedEmp && (
+                                        <div className="text-right">
+                                            <p className="text-[10px] text-slate-400 font-bold uppercase">Max Available</p>
+                                            <p className="text-sm font-black text-slate-700 dark:text-slate-200">{remainingCapacity}%</p>
+                                        </div>
+                                    )}
                                 </div>
-                            )}
+                            </div>
                         </div>
 
                         {selectedEmp && (
                             <div className="mt-6 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700">
-                                <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">Live Impact Preview</h4>
+                                <h4 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">Capacity Insight</h4>
+                                <div className="flex justify-between items-center mb-2">
+                                    <span className="text-sm text-slate-600 dark:text-slate-300">Current Assignments</span>
+                                    <span className="font-bold text-slate-700 dark:text-slate-300">{currentAlloc}%</span>
+                                </div>
                                 <div className="flex justify-between items-center">
-                                    <div className="flex items-center gap-1.5 group/billable">
-                                        <span className="text-slate-600 dark:text-slate-300">Effective Rate</span>
-                                        <div className="relative">
-                                            <AlertCircle className="w-3 h-3 text-slate-400 cursor-help" />
-                                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 bg-slate-800 text-white text-[10px] rounded shadow-xl opacity-0 group-billable:opacity-100 transition-opacity whitespace-nowrap z-[70] pointer-events-none">
-                                                Applied rate for this project
-                                                <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <span className="font-bold text-blue-600 dark:text-blue-400">
-                                        ${Number(usdRate || 0).toFixed(2)} / hr
+                                    <span className="text-sm text-slate-600 dark:text-slate-300">Remaining Bandwidth</span>
+                                    <span className={cn(
+                                        "font-bold",
+                                        remainingCapacity > 20 ? "text-emerald-500" : remainingCapacity > 0 ? "text-amber-500" : "text-red-500"
+                                    )}>
+                                        {remainingCapacity}%
                                     </span>
                                 </div>
-                                <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                                <div className="pt-2 mt-2 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center">
                                     <span className="text-slate-600 dark:text-slate-400 text-xs italic">
-                                        {project.type === 'T&M' ? 'Billing Status' : 'Project Allocation'}
+                                        Post-Assignment Status
                                     </span>
                                     <span className={cn(
-                                        "font-black text-slate-900 dark:text-white"
+                                        "font-black text-slate-900 dark:text-white",
+                                        (currentAlloc + Number(allocation)) > 100 ? "text-red-500" : "text-emerald-500"
                                     )}>
-                                        {project.type === 'T&M'
-                                            ? 'Ready to Log Hours'
-                                            : `${allocation}% Assigned`
-                                        }
+                                        {currentAlloc + Number(allocation)}% Total
                                     </span>
                                 </div>
                             </div>

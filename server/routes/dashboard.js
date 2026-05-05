@@ -8,7 +8,7 @@ const { getActiveMonthsForEmployee, toLocalDate, getMonthsInPeriod, getValidMont
 router.get('/summary', async (req, res) => {
   const { startDate, endDate } = req.query;
   const orgId = req.user.organizationId;
-  console.log("DEBUG: Executing Dashboard Summary Query at", new Date().toISOString());
+
   
   // Explicitly compute the effective start date based on frontend filters, heavily clamped to 2026-01-01
   const MIN_START_DATE = '2026-01-01';
@@ -172,8 +172,8 @@ GROUP BY process_type;
     let totalAllocatedCosts = 0;
     const processTypeBreakdownMap = {
       'T&M': { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 },
-      'Fixed Bid': { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 },
-      'Fixed Value': { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 }
+      'Fixed Bid': { rev: 0, cost: 0, margin: 0, count: 0, projectedRev: 0 }
+
     };
 
     projectAggRes.rows.forEach(row => {
@@ -293,6 +293,14 @@ ProjectDays AS (
     CROSS JOIN DateBoundaries db
     WHERE p.organization_id = $1
 ),
+EmployeeAllocatedCosts AS (
+
+    SELECT 
+        employee_id,
+        SUM(total_employee_cost) as total_allocated_cost
+    FROM EmployeeCosts
+    GROUP BY employee_id
+),
 EmployeeRevenueAttribution AS (
     SELECT 
         ec.employee_id,
@@ -319,11 +327,15 @@ EmployeeRevenueAttribution AS (
 SELECT 
     etp.id, etp.name, etp.role, etp.monthly_salary,
     etp.total_payroll_cost as "totalCost",
+    COALESCE(eac.total_allocated_cost, 0) as "allocatedCost",
+    (etp.total_payroll_cost - COALESCE(eac.total_allocated_cost, 0)) as "benchCost",
     COALESCE(era.attributed_revenue, 0) as "revenueGenerated"
 FROM EmpTotalPayroll etp
+LEFT JOIN EmployeeAllocatedCosts eac ON etp.id = eac.employee_id
 LEFT JOIN EmployeeRevenueAttribution era ON etp.id = era.employee_id
 WHERE etp.total_payroll_cost > 0 OR era.attributed_revenue > 0
-ORDER BY "totalCost" DESC;
+ORDER BY "benchCost" DESC;
+
     `;
 
     const empRes = await db.query(employeeAggQuery, globalParams);
@@ -333,9 +345,12 @@ ORDER BY "totalCost" DESC;
         role: r.role,
         monthlySalary: Number(r.monthly_salary),
         totalCost: Number(r.totalCost),
+        allocatedCost: Number(r.allocatedCost),
+        benchCost: Number(r.benchCost),
         revenueGenerated: Number(r.revenueGenerated),
         byType: {}
     }));
+
 
     res.json({
       startDate: globalStartStr,
@@ -357,7 +372,7 @@ ORDER BY "totalCost" DESC;
 
 router.get('/analytics', async (req, res) => {
     try {
-    console.log("DEBUG: Executing Dashboard Financial Query at", new Date().toISOString());
+
     const { startDate, endDate } = req.query;
     let monthsFilter = `date_trunc('month', CURRENT_DATE) - INTERVAL '5 months'`;
     let monthsEnd = `date_trunc('month', CURRENT_DATE)`;

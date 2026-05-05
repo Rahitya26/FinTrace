@@ -130,8 +130,10 @@ CREATE TABLE expense_categories (
     organization_id INTEGER REFERENCES organizations(id),
     name VARCHAR(255) NOT NULL,
     is_default BOOLEAN DEFAULT false,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(name, organization_id)
 );
+
 
 CREATE TABLE company_expenses (
     id SERIAL PRIMARY KEY,

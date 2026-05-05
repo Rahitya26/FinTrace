@@ -129,8 +129,8 @@ const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName })
                             </div>
                             <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
                                 <p className="text-sm text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">Period Salary Cost</p>
-                                <p className="text-lg font-semibold text-slate-700 dark:text-slate-300 mt-1">
-                                    {formatCurrency(performanceData.periodStaffCost || 0)} <span className="text-xs font-normal text-slate-400">/total</span>
+                                <p className="text-lg font-semibold text-slate-700 dark:text-slate-300 mt-1 tabular-nums">
+                                    {formatCurrency(performanceData.periodStaffCost || 0)}
                                 </p>
                                 {performanceData.joiningDate && localStartDate && new Date(localStartDate) < new Date(performanceData.joiningDate) ? (
                                     <p className="text-[10px] text-amber-500 font-bold mt-1 uppercase tracking-tighter bg-amber-50 dark:bg-amber-900/20 px-1 py-0.5 rounded w-fit inline-block">
@@ -140,6 +140,17 @@ const EmployeePerformanceModal = ({ isOpen, onClose, employeeId, employeeName })
                                     <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-tighter">Pro-Rata Fraction Evaluated</p>
                                 )}
                             </div>
+                            <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
+                                <p className="text-sm text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">Period Revenue Generated</p>
+                                <p className={cn(
+                                    "text-lg font-bold mt-1 tabular-nums",
+                                    performanceData.totalRevenue > (performanceData.periodStaffCost || 0) ? "text-emerald-500" : "text-red-500"
+                                )}>
+                                    {formatCurrency(performanceData.totalRevenue || 0)}
+                                </p>
+                                <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-tighter">Attributed via Weighted Cost</p>
+                            </div>
+
                             <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 col-span-2 lg:col-span-1">
                                 <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">Asset Status</p>
                                 <div className="mt-2">

@@ -1,4 +1,9 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// Force DATE (OID 1082) to be returned as a string (YYYY-MM-DD) 
+// to prevent automatic UTC conversion and timezone shifting.
+types.setTypeParser(1082, (val) => val);
+
 require('dotenv').config();
 
 const poolConfig = process.env.DATABASE_URL 
